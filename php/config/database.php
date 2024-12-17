@@ -24,4 +24,5 @@ class Database {
         return $this->conn;
     }
 }
+// bu benim veritabanım
 ?>
