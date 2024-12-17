@@ -24,5 +24,4 @@ class Database {
         return $this->conn;
     }
 }
-//benim adım levent
 ?>
