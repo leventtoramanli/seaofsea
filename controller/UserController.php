@@ -14,40 +14,40 @@ class UserController {
 
     // Kullanıcı Kaydı
     public function register($name, $surname, $email, $password) {
-        $stmt = $this->db->prepare("SELECT * FROM users WHERE email = :email");
+        // E-posta kontrolü
+        $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
         $stmt->bindParam(":email", $email);
         $stmt->execute();
-
+    
         if ($stmt->rowCount() > 0) {
             http_response_code(400);
-            echo json_encode(["message" => "User already exists"]);
+            echo json_encode(["status" => "error", "message" => "Email already registered"]);
             return;
         }
-
+    
+        // Şifre uzunluğu kontrolü
         if (strlen($password) < 8) {
             http_response_code(400);
-            echo json_encode(["message" => "Password must be at least 8 characters long"]);
+            echo json_encode(["status" => "error", "message" => "Password must be at least 8 characters long"]);
             return;
         }
-
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            http_response_code(400);
-            echo json_encode(["message" => "Invalid email format"]);
-            return;
-        }        
-
+    
+        // Şifre hash'leme
         $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-        $stmt = $this->db->prepare("INSERT INTO users (name, surname, email, password) VALUES (:name, :email, :password)");
+    
+        // Yeni kullanıcıyı ekle
+        $stmt = $this->db->prepare("INSERT INTO users (name, surname, email, password) VALUES (:name, :surname, :email, :password)");
         $stmt->execute([
             ":name" => $name,
             ":surname" => $surname,
             ":email" => $email,
             ":password" => $hashedPassword
         ]);
-
+    
         http_response_code(201);
-        echo json_encode(["message" => "User registered successfully"]);
+        echo json_encode(["status" => "success", "message" => "User registered successfully"]);
     }
+    
 
     // Kullanıcı Girişi
     public function login($email, $password) {
