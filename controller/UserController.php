@@ -6,6 +6,7 @@ require_once 'vendor/autoload.php';
 require_once 'utils/LoggerHelper.php';
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+use LoggerHelper;
 
 
 class UserController {
@@ -30,7 +31,7 @@ class UserController {
     private $db;
 
     public function __construct() {
-        $database = new Database();
+        $database = new \Database();
         $this->db = $database->conn;
     }
 
@@ -43,12 +44,12 @@ class UserController {
             $stmt->execute();
     
             if ($stmt->rowCount() > 0) {
-                throw new Exception("Email already registered");
+                throw new \Exception("Email already registered");
             }
     
             // Şifre uzunluğu kontrolü
             if (strlen($password) < 8) {
-                throw new Exception("Password must be at least 8 characters long");
+                throw new \Exception("Password must be at least 8 characters long");
             }
     
             // Şifre hash'leme
@@ -68,7 +69,7 @@ class UserController {
     
             http_response_code(201);
             echo json_encode(["status" => "success", "message" => "User registered successfully"]);
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             LoggerHelper::getLogger()->error($e->getMessage(), ["email" => $email]);
             http_response_code(400);
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
@@ -81,7 +82,7 @@ class UserController {
         $stmt = $this->db->prepare("SELECT * FROM users WHERE email = :email");
         $stmt->bindParam(":email", $email);
         $stmt->execute();
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        $user = $stmt->fetch(\PDO::FETCH_ASSOC);
 
         if ($user && password_verify($password, $user['password'])) {
             $payload = [
@@ -101,17 +102,17 @@ class UserController {
 
     // Kullanıcı Listeleme (CRUD: Read)
     public function getUsers() {
-        AuthMiddleware::checkRole('admin'); // Sadece admin erişebilir
+        \AuthMiddleware::checkRole('admin'); // Sadece admin erişebilir
     
         $stmt = $this->db->query("SELECT id, name, surname, email FROM users");
-        $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $users = $stmt->fetchAll(\PDO::FETCH_ASSOC);
     
         echo json_encode($users);
     }
 
     // Kullanıcı Güncelleme (CRUD: Update)
     public function updateUser($id, $name, $surname, $email) {
-        $userData = AuthMiddleware::validateToken();
+        $userData = \AuthMiddleware::validateToken();
     
         if ($userData['sub'] != $id) { // Kendi verilerini güncelleme kontrolü
             http_response_code(403);
@@ -142,7 +143,7 @@ class UserController {
         $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
         $stmt->bindParam(":email", $email);
         $stmt->execute();
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        $user = $stmt->fetch(\PDO::FETCH_ASSOC);
     
         if (!$user) {
             http_response_code(404);
@@ -181,7 +182,7 @@ class UserController {
     
         // Yeni şifreyi hash'le
         $hashedPassword = password_hash($newPassword, PASSWORD_BCRYPT);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        $user = $stmt->fetch(\PDO::FETCH_ASSOC);
     
         // Şifreyi güncelle ve token'ı temizle
         $stmt = $this->db->prepare("UPDATE users SET password = :password, reset_token = NULL, reset_token_expiry = NULL WHERE id = :id");

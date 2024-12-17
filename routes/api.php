@@ -2,7 +2,7 @@
 require_once 'controllers/UserController.php';
 require_once 'middlewares/AuthMiddleware.php';
 
-$userController = new UserController();
+$userController = new App\Controllers\UserController();
 $uri = explode('?', $_SERVER['REQUEST_URI'])[0];
 
 switch ($uri) {
