@@ -33,6 +33,16 @@ switch ($uri) {
         $userController->deleteUser($data['id']);
         break;
 
+    case '/api/reset-password':
+        $data = json_decode(file_get_contents("php://input"), true);
+        $userController->resetPasswordRequest($data['email']);
+        break;
+
+    case '/api/reset-password/confirm':
+        $data = json_decode(file_get_contents("php://input"), true);
+        $userController->resetPasswordConfirm($data['token'], $data['new_password']);
+        break;
+        
     default:
         http_response_code(404);
         echo json_encode(["message" => "Route not found"]);
