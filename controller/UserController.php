@@ -1,10 +1,32 @@
 <?php
+namespace App\Controllers;
+
 require_once 'config/database.php';
 require_once 'vendor/autoload.php';
+require_once 'utils/LoggerHelper.php';
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 
+
 class UserController {
+    /**
+     * @OA\Post(
+     *     path="/api/register",
+     *     summary="Kullanıcı kaydı oluştur",
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             required={"name", "surname", "email", "password"},
+     *             @OA\Property(property="name", type="string", example="John"),
+     *             @OA\Property(property="surname", type="string", example="Doe"),
+     *             @OA\Property(property="email", type="string", format="email", example="john@example.com"),
+     *             @OA\Property(property="password", type="string", example="password123")
+     *         )
+     *     ),
+     *     @OA\Response(response=201, description="User registered successfully"),
+     *     @OA\Response(response=400, description="Validation error")
+     * )
+     */
     private $db;
 
     public function __construct() {
@@ -14,38 +36,43 @@ class UserController {
 
     // Kullanıcı Kaydı
     public function register($name, $surname, $email, $password) {
-        // E-posta kontrolü
-        $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
-        $stmt->bindParam(":email", $email);
-        $stmt->execute();
+        try {
+            // E-posta kontrolü
+            $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
+            $stmt->bindParam(":email", $email);
+            $stmt->execute();
     
-        if ($stmt->rowCount() > 0) {
+            if ($stmt->rowCount() > 0) {
+                throw new Exception("Email already registered");
+            }
+    
+            // Şifre uzunluğu kontrolü
+            if (strlen($password) < 8) {
+                throw new Exception("Password must be at least 8 characters long");
+            }
+    
+            // Şifre hash'leme
+            $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
+    
+            // Kullanıcıyı ekle
+            $stmt = $this->db->prepare("INSERT INTO users (name, surname, email, password) VALUES (:name, :surname, :email, :password)");
+            $stmt->execute([
+                ":name" => $name,
+                ":surname" => $surname,
+                ":email" => $email,
+                ":password" => $hashedPassword
+            ]);
+    
+            // Loglama
+            LoggerHelper::getLogger()->info("New user registered", ["email" => $email]);
+    
+            http_response_code(201);
+            echo json_encode(["status" => "success", "message" => "User registered successfully"]);
+        } catch (Exception $e) {
+            LoggerHelper::getLogger()->error($e->getMessage(), ["email" => $email]);
             http_response_code(400);
-            echo json_encode(["status" => "error", "message" => "Email already registered"]);
-            return;
+            echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
-    
-        // Şifre uzunluğu kontrolü
-        if (strlen($password) < 8) {
-            http_response_code(400);
-            echo json_encode(["status" => "error", "message" => "Password must be at least 8 characters long"]);
-            return;
-        }
-    
-        // Şifre hash'leme
-        $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-    
-        // Yeni kullanıcıyı ekle
-        $stmt = $this->db->prepare("INSERT INTO users (name, surname, email, password) VALUES (:name, :surname, :email, :password)");
-        $stmt->execute([
-            ":name" => $name,
-            ":surname" => $surname,
-            ":email" => $email,
-            ":password" => $hashedPassword
-        ]);
-    
-        http_response_code(201);
-        echo json_encode(["status" => "success", "message" => "User registered successfully"]);
     }
     
 
@@ -74,22 +101,34 @@ class UserController {
 
     // Kullanıcı Listeleme (CRUD: Read)
     public function getUsers() {
-        $stmt = $this->db->query("SELECT id, name, email FROM users");
+        AuthMiddleware::checkRole('admin'); // Sadece admin erişebilir
+    
+        $stmt = $this->db->query("SELECT id, name, surname, email FROM users");
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
         echo json_encode($users);
     }
 
     // Kullanıcı Güncelleme (CRUD: Update)
-    public function updateUser($id, $name, $email) {
-        $stmt = $this->db->prepare("UPDATE users SET name = :name, email = :email WHERE id = :id");
+    public function updateUser($id, $name, $surname, $email) {
+        $userData = AuthMiddleware::validateToken();
+    
+        if ($userData['sub'] != $id) { // Kendi verilerini güncelleme kontrolü
+            http_response_code(403);
+            echo json_encode(["message" => "You can only update your own data"]);
+            return;
+        }
+    
+        $stmt = $this->db->prepare("UPDATE users SET name = :name, surname = :surname, email = :email WHERE id = :id");
         $stmt->execute([
             ":name" => $name,
+            ":surname" => $surname,
             ":email" => $email,
             ":id" => $id
         ]);
-
+    
         echo json_encode(["message" => "User updated successfully"]);
-    }
+    }    
 
     // Kullanıcı Silme (CRUD: Delete)
     public function deleteUser($id) {
@@ -99,7 +138,7 @@ class UserController {
     }
 
     public function resetPasswordRequest($email) {
-        // E-posta kontrolü
+        // Kullanıcıyı email ile bul
         $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
         $stmt->bindParam(":email", $email);
         $stmt->execute();
@@ -107,15 +146,15 @@ class UserController {
     
         if (!$user) {
             http_response_code(404);
-            echo json_encode(["message" => "Email not found"]);
+            echo json_encode(["status" => "error", "message" => "Email not found"]);
             return;
         }
     
-        // Şifre sıfırlama token oluştur
+        // Reset token oluştur
         $token = bin2hex(random_bytes(32));
         $expiry = date('Y-m-d H:i:s', time() + 3600); // Token 1 saat geçerli
     
-        // Token'ı kaydet
+        // Token'ı veritabanına kaydet
         $stmt = $this->db->prepare("UPDATE users SET reset_token = :token, reset_token_expiry = :expiry WHERE id = :id");
         $stmt->execute([
             ":token" => $token,
@@ -123,18 +162,20 @@ class UserController {
             ":id" => $user['id']
         ]);
     
-        // Token'ı e-posta ile gönder (örnek)
-        echo json_encode(["message" => "Reset token sent", "token" => $token]);
+        // Token'ı e-posta olarak kullanıcıya gönder (örnek)
+        echo json_encode(["status" => "success", "message" => "Reset token sent", "token" => $token]);
     }
     
+    
     public function resetPasswordConfirm($token, $newPassword) {
+        // Token kontrolü
         $stmt = $this->db->prepare("SELECT id FROM users WHERE reset_token = :token AND reset_token_expiry > NOW()");
         $stmt->bindParam(":token", $token);
         $stmt->execute();
     
         if ($stmt->rowCount() == 0) {
             http_response_code(400);
-            echo json_encode(["message" => "Invalid or expired token"]);
+            echo json_encode(["status" => "error", "message" => "Invalid or expired token"]);
             return;
         }
     
@@ -142,14 +183,14 @@ class UserController {
         $hashedPassword = password_hash($newPassword, PASSWORD_BCRYPT);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
     
-        // Şifreyi güncelle
+        // Şifreyi güncelle ve token'ı temizle
         $stmt = $this->db->prepare("UPDATE users SET password = :password, reset_token = NULL, reset_token_expiry = NULL WHERE id = :id");
         $stmt->execute([
             ":password" => $hashedPassword,
             ":id" => $user['id']
         ]);
     
-        echo json_encode(["message" => "Password reset successfully"]);
-    }
+        echo json_encode(["status" => "success", "message" => "Password reset successfully"]);
+    }    
     
 }

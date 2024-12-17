@@ -16,15 +16,14 @@ switch ($uri) {
         $userController->login($data['email'], $data['password']);
         break;
 
-    case '/api/users':
-        AuthMiddleware::validateToken();
+    case '/api/users': // Kullanıcıları listeleme (sadece admin)
+        AuthMiddleware::checkRole('admin');
         $userController->getUsers();
         break;
-
-    case '/api/users/update':
-        AuthMiddleware::validateToken();
+    
+    case '/api/users/update': // Kullanıcı verilerini güncelleme (kendi verisi)
         $data = json_decode(file_get_contents("php://input"), true);
-        $userController->updateUser($data['id'], $data['name'], $data['email']);
+        $userController->updateUser($data['id'], $data['name'], $data['surname'], $data['email']);
         break;
 
     case '/api/users/delete':
@@ -42,7 +41,7 @@ switch ($uri) {
         $data = json_decode(file_get_contents("php://input"), true);
         $userController->resetPasswordConfirm($data['token'], $data['new_password']);
         break;
-        
+
     default:
         http_response_code(404);
         echo json_encode(["message" => "Route not found"]);
