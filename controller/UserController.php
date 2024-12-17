@@ -20,20 +20,34 @@ class UserController {
 
     public function register($name, $surname, $email, $password) {
         try {
-            $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
-            $stmt->bindParam(":email", $email);
-            $stmt->execute();
-
-            if ($stmt->rowCount() > 0) {
-                throw new \Exception("Email already registered");
+            // Boş değer kontrolü
+            if (empty($name) || empty($surname) || empty($email) || empty($password)) {
+                throw new \Exception("All fields (name, surname, email, password) are required");
             }
-
+    
+            // E-posta doğrulaması
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                throw new \Exception("Invalid email format");
+            }
+    
+            // Şifre uzunluğu kontrolü
             if (strlen($password) < 8) {
                 throw new \Exception("Password must be at least 8 characters long");
             }
-
+    
+            // E-posta kontrolü (kullanıcı zaten kayıtlı mı?)
+            $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
+            $stmt->bindParam(":email", $email);
+            $stmt->execute();
+    
+            if ($stmt->rowCount() > 0) {
+                throw new \Exception("Email already registered");
+            }
+    
+            // Şifre hash'leme
             $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-
+    
+            // Kullanıcıyı ekle
             $stmt = $this->db->prepare("INSERT INTO users (name, surname, email, password) VALUES (:name, :surname, :email, :password)");
             $stmt->execute([
                 ":name" => $name,
@@ -41,7 +55,7 @@ class UserController {
                 ":email" => $email,
                 ":password" => $hashedPassword
             ]);
-
+    
             LoggerHelper::getLogger()->info("New user registered", ["email" => $email]);
             http_response_code(201);
             echo json_encode(["status" => "success", "message" => "User registered successfully"]);
@@ -51,6 +65,7 @@ class UserController {
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
     }
+    
 
     public function login($email, $password) {
         try {
