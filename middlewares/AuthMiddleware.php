@@ -14,10 +14,13 @@ class AuthMiddleware {
         }
 
         $token = str_replace('Bearer ', '', $headers['Authorization']);
-        $secretKey = getenv('JWT_SECRET');
+        $secretKey = getenv('JWT_SECRET') ?: 'default_secret';
 
         try {
             $decoded = JWT::decode($token, new Key($secretKey, 'HS256'));
+            if ($decoded->exp < time()) {
+                throw new \Exception("Token has expired");
+            }
             return (array) $decoded; // Token'ı diziye çeviriyoruz
         } catch (Exception $e) {
             http_response_code(401);

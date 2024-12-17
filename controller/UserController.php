@@ -14,7 +14,7 @@ class UserController {
     private $db;
 
     public function __construct() {
-        $database = new Database();
+        $database = new \Database();
         $this->db = $database->conn;
     }
 
@@ -98,17 +98,24 @@ class UserController {
 
     public function getUsers() {
         try {
-            \AuthMiddleware::checkRole('admin'); // Sadece admin erişebilir
+            // Token doğrulama
+            $userData = \AuthMiddleware::validateToken();
+    
+            // Rol kontrolü
+            if ($userData['role'] !== 'admin') {
+                throw new \Exception("Forbidden: You do not have permission to access this resource");
+            }
+    
             $stmt = $this->db->query("SELECT id, name, surname, email FROM users");
             $users = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-
+    
             echo json_encode(["status" => "success", "data" => $users]);
         } catch (\Exception $e) {
             http_response_code(403);
-            LoggerHelper::getLogger()->error($e->getMessage());
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
     }
+    
 
     public function updateUser($id, $name, $surname, $email) {
         try {
