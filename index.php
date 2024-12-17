@@ -39,13 +39,24 @@ try {
 
 // Global hata yöneticisi
 set_exception_handler(function ($exception) {
-    LoggerHelper::getLogger()->error($exception->getMessage(), ["trace" => $exception->getTrace()]);
+    $response = [
+        "status" => "error",
+        "message" => "An unexpected error occurred.",
+        "error" => $exception->getMessage()
+    ];
+    App\Utils\LoggerHelper::getLogger()->error($exception->getMessage(), ["trace" => $exception->getTrace()]);
     http_response_code(500);
-    echo json_encode(["status" => "error", "message" => "An unexpected error occurred."]);
+    echo json_encode($response);
 });
 
 set_error_handler(function ($errno, $errstr, $errfile, $errline) {
-    LoggerHelper::getLogger()->error($errstr, ["file" => $errfile, "line" => $errline]);
+    $response = [
+        "status" => "error",
+        "message" => "A system error occurred.",
+        "error" => $errstr
+    ];
+    App\Utils\LoggerHelper::getLogger()->error($errstr, ["file" => $errfile, "line" => $errline]);
     http_response_code(500);
-    echo json_encode(["status" => "error", "message" => "A system error occurred."]);
+    echo json_encode($response);
 });
+

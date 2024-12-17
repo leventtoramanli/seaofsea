@@ -83,43 +83,51 @@ class UserController {
     public function login($email, $password) {
         try {
             $stmt = $this->db->prepare("SELECT * FROM users WHERE email = :email");
-            $stmt->bindParam(":email", $email);
+            $stmt->bindParam(":email", $email, \PDO::PARAM_STR);
             $stmt->execute();
             $user = $stmt->fetch(\PDO::FETCH_ASSOC);
-
-            if ($user && password_verify($password, $user['password'])) {
-                $payload = [
-                    "iss" => "seaofsea_api",
-                    "sub" => $user['id'],
-                    "iat" => time(),
-                    "exp" => time() + 3600
-                ];
-
-                $secretKey = getenv('JWT_SECRET') ?: 'default_secret';
-                $token = JWT::encode($payload, $secretKey, 'HS256');
-
-                echo json_encode(["status" => "success", "token" => $token, "message" => "Login successful"]);
-            } else {
+    
+            if (!$user || !password_verify($password, $user['password'])) {
                 throw new \Exception("Invalid credentials");
             }
+    
+            $payload = [
+                "iss" => "seaofsea_api",
+                "sub" => $user['id'],
+                "iat" => time(),
+                "exp" => time() + 3600
+            ];
+            $secretKey = $_ENV['JWT_SECRET'];
+            $token = JWT::encode($payload, $secretKey, 'HS256');
+    
+            echo json_encode(["status" => "success", "token" => $token, "message" => "Login successful"]);
         } catch (\Exception $e) {
             http_response_code(401);
-            LoggerHelper::getLogger()->error($e->getMessage());
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
     }
+    
 
-    public function getUsers() {
+    public function getUsers($page = 1, $limit = 10) {
         try {
             $userData = \App\Middlewares\AuthMiddleware::validateToken();
-    
-            // Kullanıcının rolünü al
             $userRole = $this->getUserRole($userData['sub']);
     
-            // Rol kontrolü: sadece admin erişebilir
-            \App\Middlewares\AuthMiddleware::checkRole('admin', $userRole);
+            if ($userRole !== 'admin') {
+                throw new \Exception("Forbidden: You do not have permission");
+            }
     
-            $stmt = $this->db->query("SELECT id, name, surname, email FROM users");
+            // Sayfalama hesaplaması
+            $offset = ($page - 1) * $limit;
+    
+            // Kullanıcıları getirme
+            $stmt = $this->db->prepare("SELECT id, name, surname, email, created_at 
+                                        FROM users 
+                                        LIMIT :limit OFFSET :offset");
+            $stmt->bindParam(":limit", $limit, \PDO::PARAM_INT);
+            $stmt->bindParam(":offset", $offset, \PDO::PARAM_INT);
+            $stmt->execute();
+    
             $users = $stmt->fetchAll(\PDO::FETCH_ASSOC);
     
             echo json_encode(["status" => "success", "data" => $users]);
@@ -128,40 +136,128 @@ class UserController {
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
     }    
-    
 
-    public function updateUser($id, $name, $surname, $email) {
+    public function updateUser($id, $name, $surname, $email, $role_id) {
         try {
-            $userData = \AuthMiddleware::validateToken();
-            if ($userData['sub'] != $id) {
+            $userData = \App\Middlewares\AuthMiddleware::validateToken();
+            $userRole = $this->getUserRole($userData['sub']);
+    
+            if ($userRole !== 'admin' && $userData['sub'] != $id) {
                 throw new \Exception("You can only update your own data");
             }
-
-            $stmt = $this->db->prepare("UPDATE users SET name = :name, surname = :surname, email = :email WHERE id = :id");
+    
+            // Boş değer kontrolleri
+            if (empty($name) || empty($surname) || empty($email)) {
+                throw new \Exception("Name, surname, and email cannot be empty");
+            }
+    
+            // Şifre doğrulama
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                throw new \Exception("Invalid email format");
+            }
+    
+            // Kullanıcı güncelleme
+            $stmt = $this->db->prepare("UPDATE users 
+                                        SET name = :name, surname = :surname, email = :email, role_id = :role_id 
+                                        WHERE id = :id");
             $stmt->execute([
                 ":name" => $name,
                 ":surname" => $surname,
                 ":email" => $email,
+                ":role_id" => $role_id,
                 ":id" => $id
             ]);
-
+    
             echo json_encode(["status" => "success", "message" => "User updated successfully"]);
         } catch (\Exception $e) {
-            http_response_code(403);
-            LoggerHelper::getLogger()->error($e->getMessage());
+            http_response_code(400);
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
     }
+    
 
     public function deleteUser($id) {
         try {
-            $stmt = $this->db->prepare("DELETE FROM users WHERE id = :id");
+            $userData = \App\Middlewares\AuthMiddleware::validateToken();
+            $userRole = $this->getUserRole($userData['sub']);
+    
+            if ($userRole !== 'admin') {
+                throw new \Exception("You do not have permission to delete users");
+            }
+    
+            // Soft delete işlemi
+            $stmt = $this->db->prepare("UPDATE users SET deleted_at = NOW() WHERE id = :id");
             $stmt->execute([":id" => $id]);
+    
             echo json_encode(["status" => "success", "message" => "User deleted successfully"]);
         } catch (\Exception $e) {
-            http_response_code(500);
-            LoggerHelper::getLogger()->error($e->getMessage());
-            echo json_encode(["status" => "error", "message" => "An error occurred while deleting user"]);
+            http_response_code(403);
+            echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
     }
+    
+    public function resetPasswordRequest($email) {
+        try {
+            // Kullanıcıyı email ile bul
+            $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");
+            $stmt->bindParam(":email", $email);
+            $stmt->execute();
+            $user = $stmt->fetch(\PDO::FETCH_ASSOC);
+    
+            if (!$user) {
+                throw new \Exception("Email address not found");
+            }
+    
+            // Reset token oluştur
+            $token = bin2hex(random_bytes(32));
+            $expiry = date('Y-m-d H:i:s', time() + 3600); // 1 saat geçerli
+    
+            // Token'ı veritabanına kaydet
+            $stmt = $this->db->prepare("UPDATE users SET reset_token = :token, reset_token_expiry = :expiry WHERE id = :id");
+            $stmt->execute([
+                ":token" => $token,
+                ":expiry" => $expiry,
+                ":id" => $user['id']
+            ]);
+    
+            // Token'ı geri dön (gerçek projede bu email ile gönderilir)
+            echo json_encode(["status" => "success", "message" => "Reset token generated", "token" => $token]);
+        } catch (\Exception $e) {
+            http_response_code(400);
+            echo json_encode(["status" => "error", "message" => $e->getMessage()]);
+        }
+    }
+    public function resetPasswordConfirm($token, $newPassword) {
+        try {
+            // Token kontrolü
+            $stmt = $this->db->prepare("SELECT id FROM users WHERE reset_token = :token AND reset_token_expiry > NOW()");
+            $stmt->bindParam(":token", $token);
+            $stmt->execute();
+            $user = $stmt->fetch(\PDO::FETCH_ASSOC);
+    
+            if (!$user) {
+                throw new \Exception("Invalid or expired token");
+            }
+    
+            // Şifre doğrulama
+            if (strlen($newPassword) < 8) {
+                throw new \Exception("Password must be at least 8 characters long");
+            }
+    
+            // Şifreyi hash'le
+            $hashedPassword = password_hash($newPassword, PASSWORD_BCRYPT);
+    
+            // Şifreyi güncelle ve token'ı sil
+            $stmt = $this->db->prepare("UPDATE users SET password = :password, reset_token = NULL, reset_token_expiry = NULL WHERE id = :id");
+            $stmt->execute([
+                ":password" => $hashedPassword,
+                ":id" => $user['id']
+            ]);
+    
+            echo json_encode(["status" => "success", "message" => "Password reset successfully"]);
+        } catch (\Exception $e) {
+            http_response_code(400);
+            echo json_encode(["status" => "error", "message" => $e->getMessage()]);
+        }
+    }    
 }
