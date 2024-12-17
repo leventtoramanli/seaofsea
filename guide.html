@@ -11,7 +11,6 @@
             margin: 0;
             line-height: 1.6;
         }
-        /* Sol Menü Stili */
         nav {
             width: 200px;
             background: #333;
@@ -30,7 +29,6 @@
         nav a:hover {
             background: #555;
         }
-        /* İçerik Bölgesi */
         main {
             margin-left: 200px;
             padding: 20px;
@@ -46,18 +44,18 @@
     </style>
 </head>
 <body>
-    <!-- Sol Menü -->
     <nav>
         <h2>Menü</h2>
         <a href="#kurulum">1. Kurulum</a>
         <a href="#baslatma">2. Projeyi Başlatma</a>
         <a href="#kullanim">3. Kullanım</a>
-        <a href="#dosya-yapisi">4. Dosya Yapısı</a>
-        <a href="#ek-bilgiler">5. Ek Bilgiler</a>
-        <a href="#yapilacaklar">6. Yapılacaklar</a>
+        <a href="#roller">4. Rol Yönetimi</a>
+        <a href="#reset-password">5. Şifre Sıfırlama</a>
+        <a href="#dosya-yapisi">6. Dosya Yapısı</a>
+        <a href="#ek-bilgiler">7. Ek Bilgiler</a>
+        <a href="#yapilacaklar">8. Yapılacaklar</a>
     </nav>
 
-    <!-- Ana İçerik -->
     <main>
         <section id="kurulum">
             <h2>1. Kurulum</h2>
@@ -79,50 +77,94 @@ JWT_SECRET=your_secret_key</code></pre>
 
         <section id="kullanim">
             <h2>3. Kullanım</h2>
-            <h3>3.1 Login Endpoint</h3>
-            <p>Kullanıcı girişi için JWT Token üreten endpoint:</p>
-            <pre><code>POST /api/login</code></pre>
-            <p>Gereken Veriler:</p>
-            <pre><code>{
-    "email": "test@example.com",
-    "password": "your_password"
+            <h3>3.1 Kayıt Olma</h3>
+            <pre><code>POST /api/register
+Body:
+{
+    "name": "John",
+    "surname": "Doe",
+    "email": "john@example.com",
+    "password": "password123"
 }</code></pre>
 
-            <h3>3.2 Korumalı Endpoint</h3>
-            <p>JWT doğrulaması isteyen endpoint:</p>
-            <pre><code>GET /api/protected</code></pre>
-            <p>Header:</p>
-            <pre><code>Authorization: Bearer {TOKEN}</code></pre>
+            <h3>3.2 Giriş Yapma</h3>
+            <pre><code>POST /api/login
+Body:
+{
+    "email": "john@example.com",
+    "password": "password123"
+}</code></pre>
+
+            <h3>3.3 Kullanıcı Listeleme (Admin Yetkili)</h3>
+            <pre><code>GET /api/users
+Headers:
+Authorization: Bearer {JWT_TOKEN}</code></pre>
+
+            <h3>3.4 Kullanıcı Güncelleme</h3>
+            <pre><code>POST /api/users/update
+Body:
+{
+    "id": 1,
+    "name": "John",
+    "surname": "Updated Doe",
+    "email": "john_updated@example.com"
+}</code></pre>
+        </section>
+
+        <section id="roller">
+            <h2>4. Rol Yönetimi</h2>
+            <p>Kullanıcı rolleri şu şekildedir:</p>
+            <ul>
+                <li><strong>admin</strong>: Tüm kullanıcıları yönetebilir.</li>
+                <li><strong>user</strong>: Kendi bilgilerini güncelleyebilir.</li>
+                <li><strong>banned</strong>: Erişimi kısıtlanmış kullanıcı.</li>
+            </ul>
+        </section>
+
+        <section id="reset-password">
+            <h2>5. Şifre Sıfırlama</h2>
+            <h3>5.1 Token Oluşturma</h3>
+            <pre><code>POST /api/reset-password
+Body:
+{
+    "email": "john@example.com"
+}</code></pre>
+
+            <h3>5.2 Yeni Şifre Belirleme</h3>
+            <pre><code>POST /api/reset-password/confirm
+Body:
+{
+    "token": "generated_reset_token",
+    "new_password": "newPassword123"
+}</code></pre>
         </section>
 
         <section id="dosya-yapisi">
-            <h2>4. Dosya Yapısı</h2>
+            <h2>6. Dosya Yapısı</h2>
             <pre><code>project-root/
 ├── config/
-├── controller/
+├── controllers/
 ├── middlewares/
-├── models/
+├── utils/
 ├── routes/
 ├── vendor/
+├── logs/               # Log dosyaları burada
 ├── .env
-├── composer.json
 └── index.php</code></pre>
         </section>
 
         <section id="ek-bilgiler">
-            <h2>5. Ek Bilgiler</h2>
-            <p>Flutter kullanıyorsanız CORS ayarlarını doğru yapılandırın:</p>
-            <pre><code>header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");</code></pre>
+            <h2>7. Ek Bilgiler</h2>
+            <p>Roller ve şifre sıfırlama için gerekli cron job örneği:</p>
+            <pre><code>0 * * * * mysql -u [USERNAME] -p[PASSWORD] seaofsea_db -e "DELETE FROM users WHERE reset_token_expiry < NOW();"</code></pre>
         </section>
 
         <section id="yapilacaklar">
-            <h2>6. Yapılacaklar</h2>
+            <h2>8. Yapılacaklar</h2>
             <ul>
-                <li>Kullanıcı kayıt endpoint'i ekleme</li>
-                <li>Rol tabanlı erişim kontrolü (RBAC) ekleme</li>
-                <li>Flutter entegrasyonunu test etme</li>
+                <li>Swagger dokümantasyonunu tamamla</li>
+                <li>Token süresi dolduğunda otomatik temizlik yap</li>
+                <li>Flutter entegrasyonu test et</li>
             </ul>
         </section>
     </main>
