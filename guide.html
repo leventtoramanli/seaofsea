@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>seaofsea Kullanım Kılavuzu</title>
+    <style>
+        body {
+            display: flex;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            line-height: 1.6;
+        }
+        /* Sol Menü Stili */
+        nav {
+            width: 200px;
+            background: #333;
+            color: white;
+            height: 100vh;
+            position: fixed;
+            overflow-y: auto;
+            padding-top: 20px;
+        }
+        nav a {
+            display: block;
+            color: white;
+            text-decoration: none;
+            padding: 10px 15px;
+        }
+        nav a:hover {
+            background: #555;
+        }
+        /* İçerik Bölgesi */
+        main {
+            margin-left: 200px;
+            padding: 20px;
+            flex: 1;
+        }
+        section {
+            margin-bottom: 40px;
+        }
+        h2, h3 {
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Sol Menü -->
+    <nav>
+        <h2>Menü</h2>
+        <a href="#kurulum">1. Kurulum</a>
+        <a href="#baslatma">2. Projeyi Başlatma</a>
+        <a href="#kullanim">3. Kullanım</a>
+        <a href="#dosya-yapisi">4. Dosya Yapısı</a>
+        <a href="#ek-bilgiler">5. Ek Bilgiler</a>
+        <a href="#yapilacaklar">6. Yapılacaklar</a>
+    </nav>
+
+    <!-- Ana İçerik -->
+    <main>
+        <section id="kurulum">
+            <h2>1. Kurulum</h2>
+            <p>Proje bağımlılıklarını yüklemek için:</p>
+            <pre><code>composer install</code></pre>
+            <p><strong>.env</strong> dosyasını oluşturun:</p>
+            <pre><code>DB_HOST=localhost
+DB_NAME=seaofsea_db
+DB_USER=root
+DB_PASS=password
+JWT_SECRET=your_secret_key</code></pre>
+        </section>
+
+        <section id="baslatma">
+            <h2>2. Projeyi Başlatma</h2>
+            <p>PHP'nin dahili sunucusuyla geliştirme ortamında çalıştırabilirsiniz:</p>
+            <pre><code>php -S localhost:8000</code></pre>
+        </section>
+
+        <section id="kullanim">
+            <h2>3. Kullanım</h2>
+            <h3>3.1 Login Endpoint</h3>
+            <p>Kullanıcı girişi için JWT Token üreten endpoint:</p>
+            <pre><code>POST /api/login</code></pre>
+            <p>Gereken Veriler:</p>
+            <pre><code>{
+    "email": "test@example.com",
+    "password": "your_password"
+}</code></pre>
+
+            <h3>3.2 Korumalı Endpoint</h3>
+            <p>JWT doğrulaması isteyen endpoint:</p>
+            <pre><code>GET /api/protected</code></pre>
+            <p>Header:</p>
+            <pre><code>Authorization: Bearer {TOKEN}</code></pre>
+        </section>
+
+        <section id="dosya-yapisi">
+            <h2>4. Dosya Yapısı</h2>
+            <pre><code>project-root/
+├── config/
+├── controller/
+├── middlewares/
+├── models/
+├── routes/
+├── vendor/
+├── .env
+├── composer.json
+└── index.php</code></pre>
+        </section>
+
+        <section id="ek-bilgiler">
+            <h2>5. Ek Bilgiler</h2>
+            <p>Flutter kullanıyorsanız CORS ayarlarını doğru yapılandırın:</p>
+            <pre><code>header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE");
+header("Access-Control-Allow-Headers: Content-Type, Authorization");</code></pre>
+        </section>
+
+        <section id="yapilacaklar">
+            <h2>6. Yapılacaklar</h2>
+            <ul>
+                <li>Kullanıcı kayıt endpoint'i ekleme</li>
+                <li>Rol tabanlı erişim kontrolü (RBAC) ekleme</li>
+                <li>Flutter entegrasyonunu test etme</li>
+            </ul>
+        </section>
+    </main>
+</body>
+</html>
