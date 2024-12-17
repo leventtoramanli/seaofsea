@@ -13,6 +13,19 @@ use App\Config\Database;
 class UserController {
     private $db;
 
+    private function getUserRole($userId) {
+        $stmt = $this->db->prepare("SELECT r.name AS role_name 
+                                    FROM users u
+                                    JOIN roles r ON u.role_id = r.id
+                                    WHERE u.id = :user_id");
+        $stmt->bindParam(":user_id", $userId);
+        $stmt->execute();
+        $result = $stmt->fetch(\PDO::FETCH_ASSOC);
+    
+        return $result ? $result['role_name'] : null;
+    }
+    
+
     public function __construct() {
         $database = new \Database();
         $this->db = $database->conn;
@@ -98,13 +111,13 @@ class UserController {
 
     public function getUsers() {
         try {
-            // Token doğrulama
-            $userData = \AuthMiddleware::validateToken();
+            $userData = \App\Middlewares\AuthMiddleware::validateToken();
     
-            // Rol kontrolü
-            if ($userData['role'] !== 'admin') {
-                throw new \Exception("Forbidden: You do not have permission to access this resource");
-            }
+            // Kullanıcının rolünü al
+            $userRole = $this->getUserRole($userData['sub']);
+    
+            // Rol kontrolü: sadece admin erişebilir
+            \App\Middlewares\AuthMiddleware::checkRole('admin', $userRole);
     
             $stmt = $this->db->query("SELECT id, name, surname, email FROM users");
             $users = $stmt->fetchAll(\PDO::FETCH_ASSOC);
@@ -114,7 +127,7 @@ class UserController {
             http_response_code(403);
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
-    }
+    }    
     
 
     public function updateUser($id, $name, $surname, $email) {
