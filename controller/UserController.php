@@ -18,24 +18,6 @@ class UserController {
         $this->db = $database->conn;
     }
 
-    /**
-     * @OA\Post(
-     *     path="/api/register",
-     *     summary="Kullanıcı kaydı oluştur",
-     *     @OA\RequestBody(
-     *         required=true,
-     *         @OA\JsonContent(
-     *             required={"name", "surname", "email", "password"},
-     *             @OA\Property(property="name", type="string", example="John"),
-     *             @OA\Property(property="surname", type="string", example="Doe"),
-     *             @OA\Property(property="email", type="string", format="email", example="john@example.com"),
-     *             @OA\Property(property="password", type="string", example="password123")
-     *         )
-     *     ),
-     *     @OA\Response(response=201, description="User registered successfully"),
-     *     @OA\Response(response=400, description="Validation error")
-     * )
-     */
     public function register($name, $surname, $email, $password) {
         try {
             $stmt = $this->db->prepare("SELECT id FROM users WHERE email = :email");

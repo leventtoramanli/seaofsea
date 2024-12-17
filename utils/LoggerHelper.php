@@ -1,4 +1,5 @@
 <?php
+namespace App\Utils;
 require_once 'vendor/autoload.php';
 
 use Monolog\Logger;
