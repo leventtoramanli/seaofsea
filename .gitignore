@@ -1,2 +1,4 @@
 .env
 updateGit.bat
+.vsCode/
+logs/

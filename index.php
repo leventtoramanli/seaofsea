@@ -7,13 +7,12 @@ require_once 'utils/LoggerHelper.php';
 require_once 'middlewares/CorsMiddleware.php';
 require_once 'config/database.php';
 require_once 'utils/LoggerHelper.php';
+require_once 'config/initializer.php';
 
 use App\Utils\LoggerHelper;
 use Dotenv\Dotenv;
 
-// .env dosyasını yükle
-$dotenv = Dotenv::createImmutable(__DIR__ . '/');
-$dotenv->load();
+
 
 LoggerHelper::getLogger()->info("Application started successfully");
 
