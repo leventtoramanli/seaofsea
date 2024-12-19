@@ -7,10 +7,11 @@ class Database {
     public $conn;
 
     public function __construct() {
-        $this->host = getenv('DB_HOST');
-        $this->dbname = getenv('DB_NAME');
-        $this->user = getenv('DB_USER');
-        $this->pass = getenv('DB_PASS');
+        $this->host = getenv('DB_HOST') ?: 'localhost';
+        $this->dbname = getenv('DB_NAME') ?: 'seaofsea_db';
+        $this->user = getenv('DB_USER') ?: 'root';
+        $this->pass = getenv('DB_PASS') ?: '';
+
 
         // Ortam değişkenleri kontrolü
         if (!$this->host || !$this->dbname || !$this->user) {

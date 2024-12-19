@@ -12,7 +12,7 @@ use App\Utils\LoggerHelper;
 use Dotenv\Dotenv;
 
 // .env dosyasını yükle
-$dotenv = Dotenv::createImmutable(__DIR__);
+$dotenv = Dotenv::createImmutable(__DIR__ . '/');
 $dotenv->load();
 
 LoggerHelper::getLogger()->info("Application started successfully");

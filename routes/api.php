@@ -17,17 +17,17 @@ switch ($uri) {
         break;
 
     case '/api/users': // Kullanıcıları listeleme (sadece admin)
-        AuthMiddleware::checkRole('admin');
+        \App\Middlewares\AuthMiddleware::checkRole('admin', $userController->getUserRole(\App\Middlewares\AuthMiddleware::validateToken()['sub']));
         $userController->getUsers();
         break;
     
     case '/api/users/update': // Kullanıcı verilerini güncelleme (kendi verisi)
         $data = json_decode(file_get_contents("php://input"), true);
-        $userController->updateUser($data['id'], $data['name'], $data['surname'], $data['email']);
+        $userController->updateUser($data['id'], $data['name'], $data['surname'], $data['email'], $data['role_id']);
         break;
 
     case '/api/users/delete':
-        AuthMiddleware::validateToken();
+        \App\Middlewares\AuthMiddleware::validateToken();
         $data = json_decode(file_get_contents("php://input"), true);
         $userController->deleteUser($data['id']);
         break;

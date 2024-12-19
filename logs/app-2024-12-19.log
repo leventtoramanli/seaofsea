@@ -1,0 +1,5 @@
+[2024-12-19T07:48:30.216876+01:00] app.INFO: Application started successfully [] []
+[2024-12-19T08:22:27.816329+01:00] app.ERROR: Password must be at least 8 characters long {"email":"john@example.com"} []
+[2024-12-19T08:22:41.590582+01:00] app.ERROR: SQLSTATE[23000]: Integrity constraint violation: 1452 Cannot add or update a child row: a foreign key constraint fails (`seaofsea_db`.`users`, CONSTRAINT `users_ibfk_1` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`)) {"email":"john@example.com"} []
+[2024-12-19T08:25:36.997124+01:00] app.ERROR: Password must be at least 8 characters long {"email":"john@example.com"} []
+[2024-12-19T08:25:43.441780+01:00] app.INFO: New user registered {"email":"john@example.com"} []
