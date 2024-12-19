@@ -1,106 +1,97 @@
 <?php
-require_once __DIR__ . '/vendor/autoload.php'; // Composer Autoloader
-require_once __DIR__ . '/config/database.php'; // Veritabanı bağlantısı
-require_once __DIR__ . '/controller/UserController.php'; // Kullanıcı işlemleri
-use Firebase\JWT\JWT;
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+require_once __DIR__ . '/../vendor/autoload.php';
+require_once __DIR__ . '/../config/initializer.php';
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../utils/LoggerHelper.php';
+require_once __DIR__ . '/../middlewares/CorsMiddleware.php';
 
 use App\Utils\LoggerHelper;
-use Dotenv\Dotenv;
+use App\Middlewares\CorsMiddleware;
 
-// .env dosyasını yükle
-$dotenv = Dotenv::createImmutable(__DIR__ . '/');
-$dotenv->load();
+// CORS Middleware
+\CorsMiddleware::handle();
 
-session_start(); // Token'ı saklamak için oturum başlatılıyor
-?>
+// Loglama
+LoggerHelper::getLogger()->info("CRUD Test Page started successfully");
 
-<!DOCTYPE html>
+// Helper function to make JSON requests
+function sendRequest($method, $url, $data = null) {
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+    
+    if ($data) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Content-Length: ' . strlen(json_encode($data))
+        ]);
+    }
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+    if (curl_errno($ch)) {
+        echo 'Request Error: ' . curl_error($ch);
+    }
+
+    curl_close($ch);
+
+    return [
+        'status' => $httpCode,
+        'response' => json_decode($response, true)
+    ];
+}
+
+// HTML Form Output
+echo '<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kullanıcı İşlemleri Test Sayfası</title>
+    <title>CRUD Test Page</title>
 </head>
 <body>
-    <h1>Kullanıcı İşlemleri Test Sayfası</h1>
+    <h1>CRUD Test Page</h1>
+    <form action="" method="POST">
+        <label for="method">HTTP Method:</label>
+        <select name="method" id="method">
+            <option value="POST">POST (Create)</option>
+            <option value="GET">GET (Read)</option>
+            <option value="PUT">PUT (Update)</option>
+            <option value="DELETE">DELETE (Delete)</option>
+        </select><br><br>
 
-    <?php if (empty($_SESSION['token'])): ?>
-        <h2>Giriş Yap</h2>
-        <form method="POST">
-            <label for="email">Email:</label>
-            <input type="email" name="email" id="email" required>
-            <br><br>
-            <label for="password">Şifre:</label>
-            <input type="password" name="password" id="password" required>
-            <br><br>
-            <button type="submit" name="operation" value="login">Giriş Yap</button>
-        </form>
-    <?php else: ?>
-        <h2>Token:</h2>
-        <pre><?php echo $_SESSION['token']; ?></pre>
-        <form method="POST">
-            <label for="operation">Bir işlem seçin:</label>
-            <select name="operation" id="operation">
-                <option value="register">Kullanıcı Kaydı</option>
-                <option value="list_users">Kullanıcıları Listele</option>
-                <option value="delete_user">Kullanıcı Sil</option>
-            </select>
-            <br><br>
-            <label for="user_data">Kullanıcı Bilgileri (JSON formatında):</label><br>
-            <textarea name="user_data" id="user_data" rows="5" cols="40">{ "name": "John Doe", "surname": "Doe", "email": "john@example.com", "password": "123456" }</textarea>
-            <br><br>
-            <button type="submit">Çalıştır</button>
-        </form>
-    <?php endif; ?>
+        <label for="url">API URL:</label>
+        <input type="text" name="url" id="url" placeholder="http://localhost/api" required><br><br>
 
-    <?php if (!empty($response)): ?>
-        <h2>Sonuç:</h2>
-        <pre><?php echo print_r($response, true); ?></pre>
-    <?php endif; ?>
-</body>
-</html>
+        <label for="data">JSON Data (if applicable):</label><br>
+        <textarea name="data" id="data" rows="5" cols="50" placeholder=\'{"key":"value"}\'></textarea><br><br>
 
-<?php
+        <button type="submit">Send Request</button>
+    </form>
+
+    <h2>Response:</h2>
+    <pre>';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $operation = $_POST['operation'];
-    $response = '';
-    $userController = new \App\Controllers\UserController();
+    $method = $_POST['method'] ?? 'GET';
+    $url = $_POST['url'] ?? '';
+    $data = !empty($_POST['data']) ? json_decode($_POST['data'], true) : null;
 
-    switch ($operation) {
-        case 'login':
-            $email = $_POST['email'];
-            $password = $_POST['password'];
-
-            // Kullanıcıyı doğrula ve token oluştur
-            $user = $userController->login($email, $password);
-            if (!empty($user['error'])) {
-                $response = $user['error'];
-            } else {
-                $payload = [
-                    'id' => $user['id'],
-                    'role' => $user['role'],
-                    'iat' => time(),
-                    'exp' => time() + 3600, // Token 1 saat geçerli
-                ];
-                $token = JWT::encode($payload, getenv('JWT_SECRET'), 'HS256');
-                $_SESSION['token'] = $token;
-                $response = 'Giriş başarılı! Token oluşturuldu.';
-            }
-            break;
-
-        case 'register':
-        case 'list_users':
-        case 'delete_user':
-            if (empty($_SESSION['token'])) {
-                $response = 'Hata: Önce giriş yapmalısınız.';
-            } else {
-                $response = $userController->$operation($_POST['user_data'], $_SESSION['token']);
-            }
-            break;
-
-        default:
-            $response = 'Geçersiz işlem.';
-            break;
+    if ($url) {
+        $response = sendRequest($method, $url, $data);
+        print_r($response);
+    } else {
+        echo "No URL provided.";
     }
 }
+
+echo '</pre>
+</body>
+</html>';
 ?>

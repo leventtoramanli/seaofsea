@@ -1,31 +1,31 @@
 <?php
+
+if (session_status() == PHP_SESSION_NONE) session_start();
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-require_once 'vendor/autoload.php';
-require_once 'utils/LoggerHelper.php';
-require_once 'middlewares/CorsMiddleware.php';
+require_once 'config/initializer.php';
 require_once 'config/database.php';
 require_once 'utils/LoggerHelper.php';
-require_once 'config/initializer.php';
+require_once 'middlewares/CorsMiddleware.php';
 
 use App\Utils\LoggerHelper;
-use Dotenv\Dotenv;
+use App\Middlewares\CorsMiddleware;
 
-
+\CorsMiddleware::handle();
 
 LoggerHelper::getLogger()->info("Application started successfully");
 
 echo "Application is running.";
+function get_env_var($key, $default = null) {
+    return isset($_ENV[$key]) ? $_ENV[$key] : $default;
+}
 
-// CORS Middleware
-CorsMiddleware::handle();
-
-// Veritabanı bağlantısı
-$host = $_ENV['DB_HOST'];
-$dbname = $_ENV['DB_NAME'];
-$user = $_ENV['DB_USER'];
-$pass = $_ENV['DB_PASS'];
+$host = get_env_var('DB_HOST');
+$dbname = get_env_var('DB_NAME');
+$user = get_env_var('DB_USER');
+$pass = get_env_var('DB_PASS');
+$jwtSecret = get_env_var('JWT_SECRET');
 
 try {
     $pdo = new PDO("mysql:host=$host;dbname=$dbname", $user, $pass);
@@ -36,7 +36,6 @@ try {
     die(json_encode(["status" => "error", "message" => "Database connection failed."]));
 }
 
-// Global hata yöneticisi
 set_exception_handler(function ($exception) {
     $response = [
         "status" => "error",
@@ -58,4 +57,3 @@ set_error_handler(function ($errno, $errstr, $errfile, $errline) {
     http_response_code(500);
     echo json_encode($response);
 });
-

@@ -3,7 +3,7 @@ class CorsMiddleware {
     public static function handle() {
         // CORS başlıklarını ayarlıyoruz
         header("Access-Control-Allow-Origin: *"); // Tüm domain'lere izin verir
-        header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
+        header("Access-Control-Allow-Methods: ENV,GET, POST, PUT, DELETE, OPTIONS");
         header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
         // Preflight (OPTIONS) isteklerini kontrol et

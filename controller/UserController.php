@@ -4,10 +4,12 @@ namespace App\Controllers;
 require_once 'config/database.php';
 require_once 'vendor/autoload.php';
 require_once 'utils/LoggerHelper.php';
+require_once 'utils/InputValidator.php';
 
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 use App\Utils\LoggerHelper;
+use App\Utils\InputValidator;
 use App\Config\Database;
 
 class UserController {
@@ -33,19 +35,13 @@ class UserController {
 
     public function register($name, $surname, $email, $password) {
         try {
-            // Boş değer kontrolü
-            if (empty($name) || empty($surname) || empty($email) || empty($password)) {
-                throw new \Exception("All fields (name, surname, email, password) are required");
-            }
-    
-            // E-posta doğrulaması
-            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                throw new \Exception("Invalid email format");
-            }
-    
-            // Şifre uzunluğu kontrolü
-            if (strlen($password) < 8) {
-                throw new \Exception("Password must be at least 8 characters long");
+            $name = InputValidator::sanitize($name);
+            $surname = InputValidator::sanitize($surname);
+            $email = InputValidator::validateEmail($email) ? $email : null;
+            $password = InputValidator::validatePassword($password) ? $password : null;
+
+            if (!$name || !$surname || !$email || !$password) {
+                throw new \Exception("Invalid or missing inputs.");
             }
     
             // E-posta kontrolü (kullanıcı zaten kayıtlı mı?)
