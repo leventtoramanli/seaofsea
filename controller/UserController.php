@@ -31,12 +31,7 @@ class UserController {
         $this->db = $database->conn;
     }
 
-    public function register($user_data) {
-        $name = $user_data['name'];
-        $surname = $user_data['surname'];
-        $email = $user_data['email'];
-        $password = $user_data['password'];
-        $role_id = $user_data['role_id'] ?? 2; // Default role is user
+    public function register($name, $surname, $email, $password) {
         try {
             // Boş değer kontrolü
             if (empty($name) || empty($surname) || empty($email) || empty($password)) {
@@ -140,7 +135,7 @@ class UserController {
             http_response_code(403);
             echo json_encode(["status" => "error", "message" => $e->getMessage()]);
         }
-    }
+    }    
 
     public function updateUser($id, $name, $surname, $email, $role_id) {
         try {
