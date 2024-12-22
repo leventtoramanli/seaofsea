@@ -1,15 +1,33 @@
 <?php
-require_once '../lib/handlers/DatabaseHandler.php';
-require_once '../lib/handlers/CRUDHandler.php';
-require_once '../lib/handlers/PasswordResetHandler.php';
+require_once __DIR__ . '/../../vendor/autoload.php'; // .env için autoload
 
-$dbHandler = new DatabaseHandler("localhost", "root", "", "your_database");
-$dbConnection = $dbHandler->getConnection();
+use Dotenv\Dotenv;
 
-$crud = new CRUDHandler($dbConnection);
-$passwordReset = new PasswordResetHandler($dbConnection);
+class DatabaseHandler {
+    private $connection;
 
-// Example usage: Create record
-$data = ['name' => 'Example', 'email' => 'example@example.com'];
-$crud->create('users', $data);
+    public function __construct() {
+        $dotenv = Dotenv::createImmutable(__DIR__ . '/../../'); // Proje kök dizinindeki .env'i oku
+        $dotenv->load();
+
+        $host = $_ENV['DB_HOST'];
+        $user = $_ENV['DB_USER'];
+        $password = $_ENV['DB_PASSWORD'];
+        $dbname = $_ENV['DB_NAME'];
+
+        $this->connection = new mysqli($host, $user, $password, $dbname);
+
+        if ($this->connection->connect_error) {
+            die("Database connection failed: " . $this->connection->connect_error);
+        }
+    }
+
+    public function getConnection() {
+        return $this->connection;
+    }
+
+    public function closeConnection() {
+        $this->connection->close();
+    }
+}
 ?>

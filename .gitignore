@@ -7,3 +7,4 @@
 # Cache files
 *.log
 *.cache
+/test/
