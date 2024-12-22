@@ -1,0 +1,9 @@
+# Environment files
+.env
+
+# Composer dependencies
+/vendor/
+
+# Cache files
+*.log
+*.cache
