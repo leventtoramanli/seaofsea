@@ -27,6 +27,7 @@ if ($_SESSION['reset_attempts'] >= 3 && (time() - $_SESSION['last_reset_time']) 
 $_SESSION['reset_attempts']++;
 $_SESSION['last_reset_time'] = time();
 */
+/* bu bir deneme */
 
 $_SESSION['register_attempts']++;
 $_SESSION['last_register_time'] = time();

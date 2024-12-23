@@ -1,0 +1,118 @@
+diff --git a/.gitIgnore b/.gitIgnore
+index b59b1d0..a9e81e7 100644
+--- a/.gitIgnore
++++ b/.gitIgnore
+@@ -1,6 +1,5 @@
+ # Environment files
+ .env
+-updateGit.bat
+ 
+ # Composer dependencies
+ /vendor/
+@@ -8,3 +7,4 @@ updateGit.bat
+ # Cache files
+ *.log
+ *.cache
++/test/
+diff --git a/public/api/register.php b/public/api/register.php
+index 7998266..99d95b9 100644
+--- a/public/api/register.php
++++ b/public/api/register.php
+@@ -27,6 +27,7 @@ if ($_SESSION['reset_attempts'] >= 3 && (time() - $_SESSION['last_reset_time'])
+ $_SESSION['reset_attempts']++;
+ $_SESSION['last_reset_time'] = time();
+ */
++/* bu bir deneme */
+ 
+ $_SESSION['register_attempts']++;
+ $_SESSION['last_register_time'] = time();
+diff --git a/updateGit.bat b/updateGit.bat
+index 8e4a514..125cfff 100644
+--- a/updateGit.bat
++++ b/updateGit.bat
+@@ -1,43 +1,59 @@
+ @echo off
+-REM Git Auto Commit and Push Script with ASCII Art
+-REM Klasör: C:\xampp\htdocs\seaofsea
++REM Git Detailed Sync Script with Logging
++REM Bu script, değişikliklerinizi adım adım commit eder, geçmişi gösterir ve bir log dosyasına kaydeder.
+ 
+-REM ASCII Art
+-echo.
+-@echo off
+-REM Git Auto Commit and Push Script with ASCII Art
+-REM Klasör: C:\xampp\htdocs\seaofsea
+-
+-REM Proje klasörüne geç
++REM Proje klasörüne git
+ cd /d C:\xampp\htdocs\seaofsea
+ 
+-REM Git işlemleri
+-git reset
+-git add .
+-git commit -m "Auto-sync: %date% %time%"
+-git push origin main
++REM Uzak depodan değişiklikleri al
++echo.
++echo ------------------------------------
++echo      Uzak depo değişiklikleri alınıyor...
++echo ------------------------------------
++git pull origin main
+ 
+-REM İşlem tamamlandı mesajı
++REM Değişikliklerin farkını göster ve log dosyasına kaydet
++echo.
+ echo ------------------------------------
+-echo        Git Auto Commit and Push
+-echo             Tamamlandı!
++echo      Dosya değişiklikleri:
+ echo ------------------------------------
+-pause
++git diff >> git_diff_log.txt
++git diff
+ 
++REM Yerel değişiklikleri ekle
+ echo.
++echo ------------------------------------
++echo      Değişiklikler ekleniyor...
++echo ------------------------------------
++git add .
+ 
+-REM Proje klasörüne geç
+-cd /d C:\xampp\htdocs\seaofsea
++REM Her dosya için ayrı commit oluştur
++echo.
++echo ------------------------------------
++echo      Commit oluşturuluyor...
++echo ------------------------------------
++FOR /F "tokens=*" %%G IN ('git diff --name-only --cached') DO (
++    git commit -m "Updated %%G on %date% %time%"
++)
+ 
+-REM Git işlemleri
+-git reset
+-git add .
+-git commit -m "Auto-sync: %date% %time%"
++REM Yerel değişiklikleri uzak depoya gönder
++echo.
++echo ------------------------------------
++echo      Değişiklikler uzak depoya gönderiliyor...
++echo ------------------------------------
+ git push origin main
+ 
++REM Geçmişi göster ve log dosyasına kaydet
++echo.
++echo ------------------------------------
++echo      Git Commit Geçmişi:
++echo ------------------------------------
++git log --oneline --graph --decorate -10 >> git_log.txt
++git log --oneline --graph --decorate -10
++
+ REM İşlem tamamlandı mesajı
++echo.
+ echo ------------------------------------
+-echo        Git Auto Commit and Push
+-echo             Tamamlandı!
++echo      Git Sync İşlemi Tamamlandı!
+ echo ------------------------------------
+ pause

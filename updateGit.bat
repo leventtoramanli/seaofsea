@@ -1,43 +1,35 @@
 @echo off
-REM Git Auto Commit and Push Script with ASCII Art
-REM Klasör: C:\xampp\htdocs\seaofsea
+REM Git Auto Sync Script
+REM Bu script, yerel değişiklikleri commit eder ve uzak depoya gönderir.
 
-REM ASCII Art
-echo.
-@echo off
-REM Git Auto Commit and Push Script with ASCII Art
-REM Klasör: C:\xampp\htdocs\seaofsea
-
-REM Proje klasörüne geç
+REM Proje klasörüne git
 cd /d C:\xampp\htdocs\seaofsea
 
-REM Git işlemleri
-git reset
+REM Uzak depodan değişiklikleri al
+echo.
+echo ------------------------------------
+echo      Uzak depo değişiklikleri alınıyor...
+echo ------------------------------------
+git pull origin main
+
+REM Yerel değişiklikleri ekle ve commit et
+echo.
+echo ------------------------------------
+echo      Değişiklikler commit ediliyor...
+echo ------------------------------------
 git add .
 git commit -m "Auto-sync: %date% %time%"
+
+REM Yerel değişiklikleri uzak depoya gönder
+echo.
+echo ------------------------------------
+echo      Değişiklikler uzak depoya gönderiliyor...
+echo ------------------------------------
 git push origin main
 
 REM İşlem tamamlandı mesajı
-echo ------------------------------------
-echo        Git Auto Commit and Push
-echo             Tamamlandı!
-echo ------------------------------------
-pause
-
 echo.
-
-REM Proje klasörüne geç
-cd /d C:\xampp\htdocs\seaofsea
-
-REM Git işlemleri
-git reset
-git add .
-git commit -m "Auto-sync: %date% %time%"
-git push origin main
-
-REM İşlem tamamlandı mesajı
 echo ------------------------------------
-echo        Git Auto Commit and Push
-echo             Tamamlandı!
+echo      Git Sync İşlemi Tamamlandı!
 echo ------------------------------------
 pause
