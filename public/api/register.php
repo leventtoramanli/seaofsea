@@ -3,7 +3,9 @@ require_once __DIR__ . '/../../lib/handlers/DatabaseHandler.php';
 require_once __DIR__ . '/../../lib/handlers/UserHandler.php';
 
 header('Content-Type: application/json');
-session_start(); 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 if (!isset($_SESSION['register_attempts'])) {
     $_SESSION['register_attempts'] = 0;

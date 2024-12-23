@@ -32,4 +32,3 @@ echo.
 echo ------------------------------------
 echo      Git Sync İşlemi Tamamlandı!
 echo ------------------------------------
-pause
