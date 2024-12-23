@@ -2,7 +2,7 @@
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-require __DIR__ . '/vendor/autoload.php'; // PHPMailer autoload
+require __DIR__ . '/../../vendor/autoload.php'; // PHPMailer autoload
 
 class MailHandler {
     private $mailer;
@@ -14,6 +14,10 @@ class MailHandler {
         $this->mailer->isSMTP();
         $this->mailer->Host = 'mail.seaofsea.com';
         $this->mailer->SMTPAuth = true;
+        $this->mailer->SMTPDebug = 2; // Debug seviyesi
+        $this->mailer->Debugoutput = function ($str, $level) {
+            file_put_contents('smtp_debug.log', date('Y-m-d H:i:s') . " - $str\n", FILE_APPEND);
+        };
         $this->mailer->Username = 'no-reply@seaofsea.com';
         $this->mailer->Password = 'no-reply145326326Ll';
         $this->mailer->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
