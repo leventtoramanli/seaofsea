@@ -1,14 +1,17 @@
 <?php
 require_once __DIR__ . '/DatabaseHandler.php';
 require_once __DIR__ . '/CRUDHandlers.php';
+require_once __DIR__ . '/MailHandler.php';
 
 class UserHandler {
     private $db;
     private $crud;
+    private $mailHandler;
 
     public function __construct($dbConnection) {
         $this->db = $dbConnection;
         $this->crud = new CRUDHandler($dbConnection);
+        $this->mailHandler = new MailHandler();
     }
 
     public function validateAndRegisterUser($data) {
@@ -72,14 +75,17 @@ class UserHandler {
         // Hataları döndür
         return ['success' => false, 'errors' => $errors];
     }
-    public function sendVerificationEmail($email, $token) {
+    private function sendVerificationEmail($email, $token) {
         $subject = "Email Verification";
         $verificationLink = "http://localhost/api/verify_email.php?token=$token";
-    
-        $message = "Please click the following link to verify your email:\n\n$verificationLink";
-        $headers = "From: no-reply@yourdomain.com";
-    
-        return mail($email, $subject, $message, $headers);
-    }    
+
+        $body = "
+            <h1>Email Verification</h1>
+            <p>Please click the link below to verify your email:</p>
+            <a href=\"$verificationLink\">Verify Email</a>
+        ";
+
+        return $this->mailHandler->sendMail($email, $subject, $body);
+    }   
 }
 ?>
