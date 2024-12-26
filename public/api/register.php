@@ -15,20 +15,6 @@ if (!isset($_SESSION['register_attempts'])) {
 if ($_SESSION['register_attempts'] >= 5 && (time() - $_SESSION['last_register_time']) < 60) {
     die(json_encode(['success' => false, 'message' => 'Too many registration attempts. Please try again later.']));
 }
-/*
-Reset tokenlarını otomatik olarak sıfırla
-if (!isset($_SESSION['reset_attempts'])) {
-    $_SESSION['reset_attempts'] = 0;
-    $_SESSION['last_reset_time'] = time();
-}
-
-if ($_SESSION['reset_attempts'] >= 3 && (time() - $_SESSION['last_reset_time']) < 3600) {
-    die(json_encode(['success' => false, 'message' => 'Too many password reset requests. Please try again later.']));
-}
-
-$_SESSION['reset_attempts']++;
-$_SESSION['last_reset_time'] = time();
-*/
 
 $_SESSION['register_attempts']++;
 $_SESSION['last_register_time'] = time();
