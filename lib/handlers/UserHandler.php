@@ -86,9 +86,10 @@ class UserHandler {
                 return ['success' => true];
             } catch (Exception $e) {
                 $this->db->rollBack();
-                return ['success' => false, 'errors' => [$e->getMessage()]];
+                return ['success' => false, 'Internal Server Error '/* . $e->getMessage()*/];
             }finally {
                 $this->db->autocommit(true);
+                return ['success' => true, 'User Registered, Please check your email for verification.'];
             }
         }
 
