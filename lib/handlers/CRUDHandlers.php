@@ -27,22 +27,31 @@ class CRUDHandler {
         return false;
     }
 
-    public function read($table, $conditions = []) {
-        $query = "SELECT * FROM $table";
-        if (!empty($conditions)) {
-            $query .= " WHERE " . implode(" AND ", array_map(function ($key) {
-                return "$key=?";
-            }, array_keys($conditions)));
+    public function read($table, $conditions, $fetchAll = false) {
+        if (empty($conditions)) {
+            throw new Exception('Conditions array cannot be empty.');
         }
-
-        $stmt = $this->db->prepare($query);
-        if (!empty($conditions)) {
-            $types = str_repeat("s", count($conditions));
-            $stmt->bind_param($types, ...array_values($conditions));
+    
+        $query = "SELECT * FROM $table WHERE ";
+        $query .= implode(" AND ", array_map(fn($key) => "$key = ?", array_keys($conditions)));
+        $values = array_values($conditions);
+    
+        try {
+            $stmt = $this->db->prepare($query);
+            $types = str_repeat("s", count($values));
+            $stmt->bind_param($types, ...$values);
+    
+            if ($stmt->execute()) {
+                $result = $stmt->get_result();
+                return $fetchAll ? $result->fetch_all(MYSQLI_ASSOC) : $result->fetch_assoc();
+            }
+    
+            return $fetchAll ? [] : null;
+        } catch (mysqli_sql_exception $e) {
+            throw new Exception('Database query error: ' . $e->getMessage());
         }
-        $stmt->execute();
-        return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     }
+    
 
     public function update($table, $data, $conditions) {
         $setClause = implode(", ", array_map(function ($key) {
