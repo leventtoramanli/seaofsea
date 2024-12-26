@@ -22,8 +22,9 @@ class CRUDHandler {
             if ($returnId) {
                 return $this->db->insert_id;
             }
+            return true;
         }
-        return $stmt->execute();
+        return false;
     }
 
     public function read($table, $conditions = []) {

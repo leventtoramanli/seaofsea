@@ -17,27 +17,20 @@ class UserHandler {
     public function validateAndRegisterUser($data) {
         $errors = [];
 
-        // Verileri al ve temizle
         $name = trim($data['name'] ?? '');
         $surname = trim($data['surname'] ?? '');
         $email = trim($data['email'] ?? '');
         $password = $data['password'] ?? '';
 
-        // Validasyonlar
-        if (empty($name)) {
-            $errors[] = "Name is required.";
-        }
+        if (empty($name)) {$errors[] = "Name is required.";}
 
-        if (empty($surname)) {
-            $errors[] = "Surname is required.";
-        }
+        if (empty($surname)) {$errors[] = "Surname is required.";}
 
         if (empty($email)) {
             $errors[] = "Email is required.";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Invalid email format.";
         } else {
-            // Email benzersizlik kontrolü
             $existingUser = $this->crud->read('users', ['email' => $email]);
             if (!empty($existingUser)) {
                 $errors[] = "Email is already registered.";
@@ -50,7 +43,6 @@ class UserHandler {
             $errors[] = "Password must be at least 6 characters long, include one uppercase letter, and one lowercase letter.";
         }
 
-        // Eğer hata yoksa kayıt işlemini yap
         if (empty($errors)) {
             $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
             $userData = [
@@ -66,13 +58,11 @@ class UserHandler {
             try {
                 $this->db->autocommit(false);
     
-                $userId = $this->crud->create('users', $userData);
+                $userId = $this->crud->create('users', $userData, true);
     
                 if (!$userId) {
                     throw new Exception('User registration failed.');
-                }/*else{
-                    throw new Exception('User id: '.$userId);
-                }*/
+                }
 
                 $verificationToken = bin2hex(random_bytes(16));
                 $expiresAt = date('Y-m-d H:i:s', strtotime('+1 hour'));
@@ -83,13 +73,9 @@ class UserHandler {
                     'expires_at' => $expiresAt
                 ]);
 
-                if (!$tokenSaved) {
-                    throw new Exception('Verification token could not be saved.');
-                }
-    
-                // Call MailHandler to send email
-                $emailSent = $this->sendVerificationEmail($userData['email'], $verificationToken);
+                if (!$tokenSaved) { throw new Exception('Verification token could not be saved.'); }
 
+                $emailSent = $this->sendVerificationEmail($userData['email'], $verificationToken);
     
                 if (!$emailSent) {
                     throw new Exception('Verification email could not be sent.');
@@ -104,9 +90,8 @@ class UserHandler {
             }finally {
                 $this->db->autocommit(true);
             }
-        }//Rate limit ile devam et
+        }
 
-        // Hataları döndür
         return ['success' => false, 'errors' => $errors];
     }
     public function sendVerificationEmail($email, $token) {
