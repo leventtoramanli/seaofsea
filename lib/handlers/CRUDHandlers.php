@@ -8,7 +8,7 @@ class CRUDHandler {
         $this->db = $dbConnection;
     }
 
-    public function create($table, $data) {
+    public function create($table, $data, $returnId = false) {
         $columns = implode(", ", array_keys($data));
         $placeholders = implode(", ", array_fill(0, count($data), "?"));
         $values = array_values($data);
@@ -18,6 +18,11 @@ class CRUDHandler {
 
         $types = str_repeat("s", count($values));
         $stmt->bind_param($types, ...$values);
+        if($stmt->execute()) {
+            if ($returnId) {
+                return $this->db->insert_id;
+            }
+        }
         return $stmt->execute();
     }
 

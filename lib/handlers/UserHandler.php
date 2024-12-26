@@ -64,12 +64,15 @@ class UserHandler {
             $data['verification_token'] = $verificationToken;
             $data['is_verified'] = false;
             try {
+                $this->db->autocommit(false);
     
                 $userId = $this->crud->create('users', $userData);
     
                 if (!$userId) {
                     throw new Exception('User registration failed.');
-                }
+                }/*else{
+                    throw new Exception('User id: '.$userId);
+                }*/
 
                 $verificationToken = bin2hex(random_bytes(16));
                 $expiresAt = date('Y-m-d H:i:s', strtotime('+1 hour'));
@@ -98,6 +101,8 @@ class UserHandler {
             } catch (Exception $e) {
                 $this->db->rollBack();
                 return ['success' => false, 'errors' => [$e->getMessage()]];
+            }finally {
+                $this->db->autocommit(true);
             }
         }//Rate limit ile devam et
 
