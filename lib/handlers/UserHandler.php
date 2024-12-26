@@ -63,21 +63,50 @@ class UserHandler {
             $verificationToken = bin2hex(random_bytes(16));
             $data['verification_token'] = $verificationToken;
             $data['is_verified'] = false;
+            try {
+    
+                $userId = $this->crud->create('users', $userData);
+    
+                if (!$userId) {
+                    throw new Exception('User registration failed.');
+                }
 
-            if ($this->crud->create('users', $userData)) {
-                $this->sendVerificationEmail($email, $verificationToken);
-                return ['success' => true, 'message' => "Registration successful!"];
-            } else {
-                return ['success' => false, 'message' => "Failed to register user."];
+                $verificationToken = bin2hex(random_bytes(16));
+                $expiresAt = date('Y-m-d H:i:s', strtotime('+1 hour'));
+
+                $tokenSaved = $this->crud->create('verification_tokens', [
+                    'user_id' => $userId,
+                    'token' => $verificationToken,
+                    'expires_at' => $expiresAt
+                ]);
+
+                if (!$tokenSaved) {
+                    throw new Exception('Verification token could not be saved.');
+                }
+    
+                // Call MailHandler to send email
+                $emailSent = $this->sendVerificationEmail($userData['email'], $verificationToken);
+
+    
+                if (!$emailSent) {
+                    throw new Exception('Verification email could not be sent.');
+                }
+    
+                $this->db->commit();
+    
+                return ['success' => true];
+            } catch (Exception $e) {
+                $this->db->rollBack();
+                return ['success' => false, 'errors' => [$e->getMessage()]];
             }
         }//Rate limit ile devam et
 
         // Hataları döndür
         return ['success' => false, 'errors' => $errors];
     }
-    private function sendVerificationEmail($email, $token) {
+    public function sendVerificationEmail($email, $token) {
         $subject = "Email Verification";
-        $verificationLink = "http://localhost/api/verify_email.php?token=$token";
+        $verificationLink = "http://seaofsea.com/api/verify_email.php?token=$token";
 
         $body = "
             <h1>Email Verification</h1>

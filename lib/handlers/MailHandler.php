@@ -19,7 +19,7 @@ class MailHandler {
             file_put_contents('smtp_debug.log', date('Y-m-d H:i:s') . " - $str\n", FILE_APPEND);
         };
         $this->mailer->Username = 'no-reply@seaofsea.com';
-        $this->mailer->Password = 'no-reply145326326Ll';
+        $this->mailer->Password = 'r*X4N*U}]W~c';
         $this->mailer->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
         $this->mailer->Port = 465;
 
