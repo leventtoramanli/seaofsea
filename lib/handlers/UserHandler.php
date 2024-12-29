@@ -97,7 +97,7 @@ class UserHandler {
     }
     public function sendVerificationEmail($email, $token) {
         $subject = "Email Verification";
-        $verificationLink = "http://seaofsea.com/api/verify_email.php?token=$token";
+        $verificationLink = "http://seaofsea.com/public/api/verify_email.php?token=$token";
 
         $body = "
             <h1>Email Verification</h1>
