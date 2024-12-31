@@ -55,8 +55,8 @@ try {
     }
 
     $secretKey = $_ENV['JWT_SECRET'];
-    $issuer = 'http://localhost';
-    $audience = 'http://localhost';
+    $issuer = $_ENV['DB_HOST'];
+    $audience = $_ENV['DB_HOST'];
     $issuedAt = time();
     $expirationTime = $issuedAt + 3600;
 
