@@ -57,7 +57,7 @@ try {
 
     // Email doğrulama kontrolü
     if ($user['is_verified'] == 0) {
-        echo json_encode(['success' => false, 'message' => 'Please verify your email before logging in.']);
+        echo json_encode(['success' => true, 'message' => 'Please verify your email before logging in.']);
         exit;
     }
 
