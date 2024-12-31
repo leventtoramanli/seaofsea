@@ -2,6 +2,9 @@
 require_once __DIR__ . '/DatabaseHandler.php';
 require_once __DIR__ . '/CRUDHandlers.php';
 require_once __DIR__ . '/MailHandler.php';
+require_once __DIR__ . '/../../vendor/autoload.php';
+
+use Firebase\JWT\JWT;
 
 class UserHandler {
     private $db;
@@ -13,11 +16,6 @@ class UserHandler {
         $this->crud = new CRUDHandler($dbConnection);
         $this->mailHandler = new MailHandler();
     }
-
-/*************  ✨ Codeium Command ⭐  *************/
-    /**
-
-/******  3cd9dc75-4b98-4f13-9aaf-e69e021e5811  *******/
     public function validateAndRegisterUser($data) {
         $errors = [];
 
@@ -99,6 +97,59 @@ class UserHandler {
 
         return ['success' => false, 'errors' => $errors];
     }
+
+    public function login($email, $password) {
+        // Kullanıcıyı veritabanından al
+        $user = $this->crud->read('users', ['email' => $email]);
+        if (!$user) {
+            return [
+                'success' => false,
+                'message' => 'Invalid email or password.'
+            ];
+        }
+
+        // Şifre doğrulama
+        if (!password_verify($password, $user['password'])) {
+            return [
+                'success' => false,
+                'message' => 'Invalid email or password.'
+            ];
+        }
+
+        // Kullanıcı doğrulama durumu
+        $isVerified = $user['is_verified'] == 1;
+        $role = $user['role'] ?? 'Guest';
+
+        // JWT oluşturma
+        $secretKey = $_ENV['JWT_SECRET'];
+        $payload = [
+            'iss' => 'https://seaofsea.com/public/api/login.php',
+            'aud' => 'https://seaofsea.com',
+            'iat' => time(),
+            'exp' => time() + 3600,
+            'data' => [
+                'id' => $user['id'],
+                'email' => $user['email'],
+                'name' => $user['name'],
+                'role' => $role,
+                'is_verified' => $isVerified
+            ]
+        ];
+        $jwt = JWT::encode($payload, $secretKey, 'HS256');
+
+        return [
+            'success' => true,
+            'message' => $isVerified 
+                ? 'Login successful.' 
+                : 'You are logged in as an anonymous user. Please verify your email for full access.',
+            'data' => [
+                'token' => $jwt,
+                'is_verified' => $isVerified,
+                'role' => $role
+            ]
+        ];
+    }
+    
     public function sendVerificationEmail($email, $token) {
         $subject = "Email Verification";
         $verificationLink = "http://seaofsea.com/public/api/verify_email.php?token=$token";
