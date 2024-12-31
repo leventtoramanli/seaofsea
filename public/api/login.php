@@ -3,31 +3,35 @@ header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
-require_once __DIR__ . '/../../lib/handlers/CRUDHandlers.php'; // CRUDHandler için gerekli dosya
-require_once __DIR__ . '/../../vendor/autoload.php'; // JWT ve .env için gerekli
+require_once __DIR__ . '/../../lib/handlers/CRUDHandlers.php';
+require_once __DIR__ . '/../../vendor/autoload.php';
 
 use Firebase\JWT\JWT;
 use Dotenv\Dotenv;
 
 header('Content-Type: application/json');
 
-// .env dosyasını yükle
 $dotenv = Dotenv::createImmutable(__DIR__ . '/../../');
 $dotenv->load();
 
-// Giriş bilgilerini al
 $data = json_decode(file_get_contents('php://input'), true);
-
 $email = $data['email'] ?? '';
 $password = $data['password'] ?? '';
 
-if (empty($email) || empty($password)) {
-    echo json_encode(['success' => false, 'message' => 'Email and password are required.']);
+function jsonResponse($success, $message, $data = null) {
+    echo json_encode([
+        'success' => $success,
+        'message' => $message,
+        'data' => $data,
+    ]);
     exit;
 }
 
+if (empty($email) || empty($password)) {
+    jsonResponse(false, 'Email and password are required.');
+}
+
 try {
-    // Veritabanı bağlantısını başlat
     $dbConnection = new mysqli(
         $_ENV['DB_HOST'],
         $_ENV['DB_USER'],
@@ -40,33 +44,25 @@ try {
     }
 
     $crud = new CRUDHandler($dbConnection);
-
-    // Kullanıcıyı email ile bul
     $user = $crud->read('users', ['email' => $email]);
 
     if (!$user) {
-        echo json_encode(['success' => false, 'message' => 'Invalid email or password.']);
-        exit;
+        jsonResponse(false, 'Invalid email or password.');
     }
 
-    // Şifreyi doğrula
     if (!password_verify($password, $user['password'])) {
-        echo json_encode(['success' => false, 'message' => 'Invalid email or password.']);
-        exit;
+        jsonResponse(false, 'Invalid email or password.');
     }
 
-    // Email doğrulama kontrolü
-    if ($user['is_verified'] == 0) {
-        echo json_encode(['success' => true, 'message' => 'Please verify your email before logging in.']);
-        exit;
-    }
-
-    // JWT oluştur
     $secretKey = $_ENV['JWT_SECRET'];
-    $issuer = 'http://localhost'; // Test ortamında localhost
-    $audience = 'http://localhost'; // Test ortamında localhost
+    $issuer = 'http://localhost';
+    $audience = 'http://localhost';
     $issuedAt = time();
-    $expirationTime = $issuedAt + 3600; // 1 saat geçerli
+    $expirationTime = $issuedAt + 3600;
+
+    // Kullanıcı doğrulama ve role bilgisi
+    $isVerified = $user['is_verified'] == 1;
+    $role = $user['role'] ?? 'Anonymous'; // Rol varsayılan olarak 'Anonymous'
 
     $payload = [
         'iss' => $issuer,
@@ -76,13 +72,26 @@ try {
         'data' => [
             'id' => $user['id'],
             'email' => $email,
+            'name' => $user['name'],
+            'surname' => $user['surname'],
+            'role' => $role,
+            'is_verified' => $isVerified,
         ],
     ];
 
     $jwt = JWT::encode($payload, $secretKey, 'HS256');
 
-    echo json_encode(['success' => true, 'token' => $jwt, 'message' => 'Login successful.']);
+    // Doğrulanmamış kullanıcı için mesaj
+    $message = $isVerified
+        ? 'Login successful.'
+        : 'You are logged in as an anonymous user. Please verify your email for full access.';
+
+    jsonResponse(true, $message, [
+        'token' => $jwt,
+        'is_verified' => $isVerified,
+        'role' => $role,
+    ]);
 } catch (Exception $e) {
-    echo json_encode(['success' => false, 'message' => 'An error occurred: ' . $e->getMessage()]);
+    error_log('Error: ' . $e->getMessage());
+    jsonResponse(false, 'An error occurred, please try again later.');
 }
-?>
