@@ -14,6 +14,10 @@ class UserHandler {
         $this->mailHandler = new MailHandler();
     }
 
+/*************  ✨ Codeium Command ⭐  *************/
+    /**
+
+/******  3cd9dc75-4b98-4f13-9aaf-e69e021e5811  *******/
     public function validateAndRegisterUser($data) {
         $errors = [];
 
