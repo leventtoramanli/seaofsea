@@ -52,8 +52,8 @@ try {
 
     // JWT creation
     $secretKey = $_ENV['JWT_SECRET'];
-    $issuer = 'https://yourdomain.com';
-    $audience = 'https://yourdomain.com';
+    $issuer = 'https://seaofsea.com/public/api/login.php';
+    $audience = 'https://seaofsea.com';
     $issuedAt = time();
     $expirationTime = $issuedAt + 3600;
 
