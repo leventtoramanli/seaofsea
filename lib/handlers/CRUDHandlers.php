@@ -27,14 +27,62 @@ class CRUDHandler {
         return false;
     }
 
-    public function read($table, $conditions, $fetchAll = false) {
-        if (empty($conditions)) {
-            throw new Exception('Conditions array cannot be empty.');
+    public function read(
+        string $table,
+        array $searchs = [],
+        array|string $columns = '*',
+        string $extras = '',
+        bool $fetchAll = false
+    ) {
+        if (empty($table)) {
+            throw new Exception('Table name cannot be empty.');
         }
     
-        $query = "SELECT * FROM $table WHERE ";
-        $query .= implode(" AND ", array_map(fn($key) => "$key = ?", array_keys($conditions)));
-        $values = array_values($conditions);
+        // SELECT sütunlarını belirle
+        $selectColumns = is_array($columns) ? implode(', ', $columns) : $columns;
+    
+        // Sorguyu oluştur
+        $query = "SELECT $selectColumns FROM $table";
+        $values = [];
+        if (!empty($searchs)) {
+            $query .= " WHERE ";
+            $conditionStrings = [];
+    
+            foreach ($searchs as $condition) {
+                if (is_array($condition)) {
+                    // Mantıksal bağlaçlı grup: ['OR', ['key1' => 'value1'], ['key2' => 'value2']]
+                    if (isset($condition[0]) && in_array(strtoupper($condition[0]), ['AND', 'OR'])) {
+                        $logicalOperator = strtoupper($condition[0]);
+                        $groupConditions = array_slice($condition, 1);
+    
+                        $groupStrings = [];
+                        foreach ($groupConditions as $key => $value) {
+                            if (is_array($value)) {
+                                $operator = $value['operator'] ?? '=';
+                                $groupStrings[] = "$key $operator ?";
+                                $values[] = $value['value'];
+                            } else {
+                                $groupStrings[] = "$key = ?";
+                                $values[] = $value;
+                            }
+                        }
+    
+                        $conditionStrings[] = "(" . implode(" $logicalOperator ", $groupStrings) . ")";
+                    } else {
+                        throw new Exception('Invalid logical operator in conditions.');
+                    }
+                } else {
+                    throw new Exception('Condition format is invalid.');
+                }
+            }
+    
+            $query .= implode(" AND ", $conditionStrings);
+        }
+    
+        // Ek SQL ifadelerini ekle
+        if (!empty($extras)) {
+            $query .= " " . $extras;
+        }
     
         try {
             $stmt = $this->db->prepare($query);
@@ -51,7 +99,55 @@ class CRUDHandler {
             throw new Exception('Database query error: ' . $e->getMessage());
         }
     }
-    
+    /*
+    $user = $this->crud->read(
+    table: 'users',
+    searchs: [
+        ['AND', ['email' => 'example@example.com'], ['password' => '123123']]
+    ]
+    );
+    $users = $this->crud->read(
+    table: 'users',
+    searchs: [
+        ['OR', ['name' => ['operator' => 'LIKE', 'value' => '%John%']], ['surname' => 'Doe']]
+    ]
+    );
+    $users = $this->crud->read(
+    table: 'users',
+    searchs: [
+        ['AND', 
+            ['email' => 'example@example.com'], 
+            ['OR', 
+                ['name' => ['operator' => 'LIKE', 'value' => '%John%']], 
+                ['surname' => 'Doe']
+            ]
+        ]
+    ],
+    columns: ['id', 'name', 'email'],
+    extras: 'LIMIT 5'
+    );
+    $users = $this->crud->read(
+    table: 'users',
+    searchs: [
+        ['OR', ['name' => 'John'], ['surname' => 'Doe']]
+    ],
+    extras: 'ORDER BY created_at DESC LIMIT 10',
+    fetchAll: true
+    );
+    $page = 1; // Şu anki sayfa
+    $itemsPerPage = 10; // Her sayfada gösterilecek öğe sayısı
+    $offset = ($page - 1) * $itemsPerPage;
+
+    $users = $this->crud->read(
+        table: 'users',
+        searchs: [
+            ['is_verified' => 1]
+        ],
+        columns: ['id', 'name', 'email'],
+        extras: "ORDER BY created_at DESC LIMIT $itemsPerPage OFFSET $offset",
+        fetchAll: true
+    );
+    */    
 
     public function update($table, $data, $conditions) {
         $setClause = implode(", ", array_map(function ($key) {

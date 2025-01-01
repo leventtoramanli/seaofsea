@@ -98,10 +98,23 @@ class UserHandler {
         return ['success' => false, 'errors' => $errors];
     }
 
-    public function login($email, $password) {
+    public function login($data) {
         $errors = []; // Hata mesajlarını toplamak için bir dizi
         $errors[] = "Login işlemi başladı.";
-    
+        
+        $email = trim($data['email'] ?? '');
+        $password = $data['password'] ?? '';
+
+        if (empty($email)) {
+            $errors[] = "Email is required.";
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Invalid email format.";
+        }
+
+        if (empty($password)) {
+            $errors[] = "Password is required.";
+        }
+        
         // Kullanıcıyı veritabanından al
         try {
             $user = $this->crud->read('users', ['email' => $email]);
@@ -122,6 +135,7 @@ class UserHandler {
                 'errors' => $errors
             ];
         }
+        $errors[] = "Kullanıcı bilgileri: " . json_encode($user);
     
         // Şifre doğrulama
         if (!password_verify($password, $user['password'])) {

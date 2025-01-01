@@ -16,35 +16,34 @@ function jsonResponse($success, $message, $data = null, $errors = null) {
         'message' => $message,
         'data' => $data ?? [],
         'errors' => $errors ?? []
-    ], JSON_UNESCAPED_UNICODE);
+    ],);
     exit;
 }
-
 // Çevresel değişkenleri yükle
-if (!file_exists(__DIR__ . '/../../.env')) {
-    die('.env file is missing in the specified directory.');
-}
 $dotenv = Dotenv::createImmutable(__DIR__ . '/../../');
 $dotenv->load();
 
 // İstek verilerini al
 $data = json_decode(file_get_contents('php://input'), true);
-$email = $data['email'] ?? '';
-$password = $data['password'] ?? '';
+//$email = $data['email'] ?? '';
+//$password = $data['password'] ?? '';
 
 // Giriş için gerekli bilgilerin kontrolü
-if (empty($email) || empty($password)) {
+/*if (empty($email) || empty($password)) {
     jsonResponse(false, 'Email and password are required.');
-}
+}*/
 
 try {
     // Veritabanı bağlantısı
     $dbHandler = new DatabaseHandler();
     $dbConnection = $dbHandler->getConnection();
-
+} catch (Exception $e) {
+    jsonResponse(false, 'Database connection failed.'.$e);
+}
+try{
     // Kullanıcı doğrulama
     $userHandler = new UserHandler($dbConnection);
-    $response = $userHandler->login($email, $password);
+    $response = $userHandler->login($data);
 
     // Giriş yanıtını döndür
     jsonResponse($response['success'], $response['message'], $response['data'] ?? null, $response['errors'] ?? null);
