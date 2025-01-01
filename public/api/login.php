@@ -29,27 +29,29 @@ $dotenv->load();
 // İstek verilerini al
 $data = json_decode(file_get_contents('php://input'), true);
 
+// Giriş için gerekli verilerin doğruluğunu kontrol et
 if (!$data || empty($data['email']) || empty($data['password'])) {
     jsonResponse(false, 'Email and password are required.');
 }
 
 try {
-    // Veritabanı bağlantısı
-    $dbHandler = new DatabaseHandler();
-    $dbConnection = $dbHandler->getConnection();
+    // Veritabanı bağlantısını oluştur
+    $dbConnection = DatabaseHandler::getInstance()->getConnection();
 
-    // Kullanıcı doğrulama
+    // UserHandler sınıfını başlat
     $userHandler = new UserHandler($dbConnection);
+
+    // Kullanıcı girişini işle
     $response = $userHandler->login($data);
 
-    // Başarılı giriş durumunda yanıt döndür
+    // Yanıtı döndür
     if ($response['success']) {
         jsonResponse(true, $response['message'], $response['data']);
     } else {
         jsonResponse(false, $response['message'], null, $response['errors']);
     }
 } catch (Exception $e) {
-    // Hata durumunda loglama ve genel mesaj
+    // Hataları logla ve genel bir mesaj döndür
     error_log('Error: ' . $e->getMessage());
     jsonResponse(false, 'An error occurred, please try again later.');
 }

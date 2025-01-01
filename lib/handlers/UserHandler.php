@@ -7,12 +7,10 @@ require_once __DIR__ . '/../../vendor/autoload.php';
 use Firebase\JWT\JWT;
 
 class UserHandler {
-    private $db;
     private $crud;
     private $mailHandler;
 
     public function __construct($dbConnection) {
-        $this->db = $dbConnection;
         $this->crud = new CRUDHandler($dbConnection);
         $this->mailHandler = new MailHandler();
     }
@@ -21,18 +19,16 @@ class UserHandler {
     public function validateAndRegisterUser($data) {
         $errors = [];
 
-        // Alanları doğrula
+        // Alan doğrulama
         $name = trim($data['name'] ?? '');
         $surname = trim($data['surname'] ?? '');
         $email = trim($data['email'] ?? '');
         $password = $data['password'] ?? '';
 
-        if (empty($name)) {$errors[] = "Name is required.";}
-        if (empty($surname)) {$errors[] = "Surname is required.";}
-        if (empty($email)) {
-            $errors[] = "Email is required.";
-        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $errors[] = "Invalid email format.";
+        if (empty($name)) $errors[] = "Name is required.";
+        if (empty($surname)) $errors[] = "Surname is required.";
+        if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Valid email is required.";
         } else {
             // Email kontrolü
             $existingUser = $this->crud->read('users', ['email' => $email]);
@@ -40,9 +36,7 @@ class UserHandler {
                 $errors[] = "Email is already registered.";
             }
         }
-        if (empty($password)) {
-            $errors[] = "Password is required.";
-        } elseif (!preg_match("/^(?=.*[a-z])(?=.*[A-Z]).{6,}$/", $password)) {
+        if (empty($password) || !preg_match("/^(?=.*[a-z])(?=.*[A-Z]).{6,}$/", $password)) {
             $errors[] = "Password must be at least 6 characters long, include one uppercase letter, and one lowercase letter.";
         }
 
@@ -63,14 +57,13 @@ class UserHandler {
 
         $verificationToken = bin2hex(random_bytes(16));
         try {
-            $this->db->begin_transaction();
-
             $userId = $this->crud->create('users', $userData, true);
+
             if (!$userId) {
                 throw new Exception('User registration failed.');
             }
 
-            // Doğrulama tokeni oluştur
+            // Doğrulama tokeni ekle
             $this->crud->create('verification_tokens', [
                 'user_id' => $userId,
                 'token' => $verificationToken,
@@ -82,10 +75,8 @@ class UserHandler {
                 throw new Exception('Verification email could not be sent.');
             }
 
-            $this->db->commit();
             return ['success' => true, 'message' => 'User Registered. Please check your email for verification.'];
         } catch (Exception $e) {
-            $this->db->rollBack();
             return ['success' => false, 'message' => $e->getMessage()];
         }
     }
@@ -96,10 +87,8 @@ class UserHandler {
         $email = trim($data['email'] ?? '');
         $password = $data['password'] ?? '';
 
-        if (empty($email)) {
-            $errors[] = "Email is required.";
-        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $errors[] = "Invalid email format.";
+        if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Valid email is required.";
         }
         if (empty($password)) {
             $errors[] = "Password is required.";
@@ -108,7 +97,7 @@ class UserHandler {
             return ['success' => false, 'errors' => $errors];
         }
 
-        // Kullanıcıyı kontrol et
+        // Kullanıcı kontrolü
         $user = $this->crud->read('users', ['email' => $email]);
         if (!$user || !password_verify($password, $user['password'])) {
             return ['success' => false, 'message' => 'Invalid email or password.'];
@@ -172,3 +161,4 @@ class UserHandler {
         return $this->mailHandler->sendMail($email, $subject, $body);
     }
 }
+?>

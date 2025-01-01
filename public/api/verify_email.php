@@ -3,8 +3,13 @@ require_once __DIR__ . '/../../lib/handlers/DatabaseHandler.php';
 require_once __DIR__ . '/../../lib/handlers/CRUDHandlers.php';
 require_once __DIR__ . '/../../lib/handlers/MailHandler.php';
 
-$dbHandler = new DatabaseHandler();
-$crud = new CRUDHandler($dbHandler->getConnection());
+use Dotenv\Dotenv;
+
+$dotenv = Dotenv::createImmutable(__DIR__ . '/../../');
+$dotenv->load();
+
+$dbConnection = DatabaseHandler::getInstance()->getConnection();
+$crud = new CRUDHandler($dbConnection);
 $mailHandler = new MailHandler();
 
 $token = $_GET['token'] ?? null;
@@ -38,36 +43,42 @@ if ($token) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_email'])) {
-    $email = $_POST['email'];
+    $email = trim($_POST['email']);
 
-    $user = $crud->read('users', ['email' => $email]);
+    if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $user = $crud->read('users', ['email' => $email]);
 
-    if (!$user) {
-        $message = "No user found with the provided email.";
-        $messageType = "error";
+        if (!$user) {
+            $message = "No user found with the provided email.";
+            $messageType = "error";
+        } else {
+            $newToken = bin2hex(random_bytes(16));
+            $expiresAt = date('Y-m-d H:i:s', strtotime('+1 hour'));
+
+            // Eski tokeni sil ve yeni tokeni ekle
+            $crud->delete('verification_tokens', ['user_id' => $user['id']]);
+            $crud->create('verification_tokens', [
+                'user_id' => $user['id'],
+                'token' => $newToken,
+                'expires_at' => $expiresAt
+            ]);
+
+            // Doğrulama e-postasını gönder
+            $verificationLink = "https://seaofsea.com/api/verify_email.php?token=$newToken";
+            $mailHandler->sendMail($email, 'Email Verification', "
+                <h1>Email Verification</h1>
+                <p>Please click the link below to verify your email:</p>
+                <a href=\"$verificationLink\">Verify Email</a>
+            ");
+
+            $message = "A new verification email has been sent to $email.";
+            $messageType = "info";
+        }
     } else {
-        $newToken = bin2hex(random_bytes(16));
-        $expiresAt = date('Y-m-d H:i:s', strtotime('+1 hour'));
-
-        $crud->delete('verification_tokens', ['user_id' => $user['id']]); // Eski tokeni sil
-        $crud->create('verification_tokens', [
-            'user_id' => $user['id'],
-            'token' => $newToken,
-            'expires_at' => $expiresAt
-        ]);
-
-        $verificationLink = "http://seaofsea.com/api/verify_email.php?token=$newToken";
-        $mailHandler->sendMail($email, 'Email Verification', "
-            <h1>Email Verification</h1>
-            <p>Please click the link below to verify your email:</p>
-            <a href=\"$verificationLink\">Verify Email</a>
-        ");
-
-        $message = "A new verification email has been sent to $email.";
-        $messageType = "info";
+        $message = "Invalid email format.";
+        $messageType = "error";
     }
 }
-
 ?>
 
 <!DOCTYPE html>
@@ -75,9 +86,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_email'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $title ?></title>
+    <title><?= htmlspecialchars($title) ?></title>
     <style>
-        /* Görsel düzenlemeler */
         body {
             font-family: Arial, sans-serif;
             background: #f9f9f9;
@@ -134,8 +144,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_email'])) {
 </head>
 <body>
     <div class="container">
-        <h1><?= $title ?></h1>
-        <p class="message <?= $messageType ?>"><?= $message ?></p>
+        <h1><?= htmlspecialchars($title) ?></h1>
+        <p class="message <?= htmlspecialchars($messageType) ?>"><?= htmlspecialchars($message) ?></p>
 
         <?php if ($showResendButton): ?>
             <form method="POST">
