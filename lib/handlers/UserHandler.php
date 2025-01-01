@@ -136,7 +136,7 @@ class UserHandler {
     
         // Kullanıcı doğrulama durumu
         $isVerified = $user['is_verified'] == 1;
-        $role = $user['role'] ?? 'Guest';
+        $role = $user['role_id'] ?? 3;
         $errors[] = "Kullanıcı doğrulama durumu: " . ($isVerified ? "Doğrulandı" : "Doğrulanmadı");
         $errors[] = "Kullanıcı rolü: $role";
     
