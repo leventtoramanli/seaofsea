@@ -3,11 +3,12 @@ header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
+require_once __DIR__ . '/../../lib/handlers/DatabaseHandler.php';
 require_once __DIR__ . '/../../lib/handlers/UserHandler.php';
 require_once __DIR__ . '/../../vendor/autoload.php';
 
 use Dotenv\Dotenv;
-
+header('Content-Type: application/json');
 // JSON yanıt fonksiyonu
 function jsonResponse($success, $message, $data = null) {
     echo json_encode([
@@ -48,3 +49,4 @@ try {
     error_log('Error: ' . $e->getMessage());
     jsonResponse(false, 'An error occurred, please try again later.');
 }
+?>
