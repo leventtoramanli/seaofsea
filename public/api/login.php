@@ -8,7 +8,9 @@ require_once __DIR__ . '/../../lib/handlers/UserHandler.php';
 require_once __DIR__ . '/../../vendor/autoload.php';
 
 use Dotenv\Dotenv;
+
 header('Content-Type: application/json');
+
 // JSON yanıt fonksiyonu
 function jsonResponse($success, $message, $data = null, $errors = null) {
     echo json_encode([
@@ -16,40 +18,38 @@ function jsonResponse($success, $message, $data = null, $errors = null) {
         'message' => $message,
         'data' => $data ?? [],
         'errors' => $errors ?? []
-    ],);
+    ]);
     exit;
 }
+
 // Çevresel değişkenleri yükle
 $dotenv = Dotenv::createImmutable(__DIR__ . '/../../');
 $dotenv->load();
 
 // İstek verilerini al
 $data = json_decode(file_get_contents('php://input'), true);
-//$email = $data['email'] ?? '';
-//$password = $data['password'] ?? '';
 
-// Giriş için gerekli bilgilerin kontrolü
-/*if (empty($email) || empty($password)) {
+if (!$data || empty($data['email']) || empty($data['password'])) {
     jsonResponse(false, 'Email and password are required.');
-}*/
+}
 
 try {
     // Veritabanı bağlantısı
     $dbHandler = new DatabaseHandler();
     $dbConnection = $dbHandler->getConnection();
-} catch (Exception $e) {
-    jsonResponse(false, 'Database connection failed.'.$e);
-}
-try{
+
     // Kullanıcı doğrulama
     $userHandler = new UserHandler($dbConnection);
     $response = $userHandler->login($data);
 
-    // Giriş yanıtını döndür
-    jsonResponse($response['success'], $response['message'], $response['data'] ?? null, $response['errors'] ?? null);
+    // Başarılı giriş durumunda yanıt döndür
+    if ($response['success']) {
+        jsonResponse(true, $response['message'], $response['data']);
+    } else {
+        jsonResponse(false, $response['message'], null, $response['errors']);
+    }
 } catch (Exception $e) {
     // Hata durumunda loglama ve genel mesaj
     error_log('Error: ' . $e->getMessage());
     jsonResponse(false, 'An error occurred, please try again later.');
 }
-?>
