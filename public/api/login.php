@@ -10,16 +10,20 @@ require_once __DIR__ . '/../../vendor/autoload.php';
 use Dotenv\Dotenv;
 header('Content-Type: application/json');
 // JSON yanıt fonksiyonu
-function jsonResponse($success, $message, $data = null) {
+function jsonResponse($success, $message, $data = null, $errors = null) {
     echo json_encode([
         'success' => $success,
         'message' => $message,
         'data' => $data ?? [],
-    ]);
+        'errors' => $errors ?? []
+    ], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 // Çevresel değişkenleri yükle
+if (!file_exists(__DIR__ . '/../../.env')) {
+    die('.env file is missing in the specified directory.');
+}
 $dotenv = Dotenv::createImmutable(__DIR__ . '/../../');
 $dotenv->load();
 
@@ -43,7 +47,7 @@ try {
     $response = $userHandler->login($email, $password);
 
     // Giriş yanıtını döndür
-    jsonResponse($response['success'], $response['message'], $response['data'] ?? null);
+    jsonResponse($response['success'], $response['message'], $response['data'] ?? null, $response['errors'] ?? null);
 } catch (Exception $e) {
     // Hata durumunda loglama ve genel mesaj
     error_log('Error: ' . $e->getMessage());

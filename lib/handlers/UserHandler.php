@@ -99,69 +99,79 @@ class UserHandler {
     }
 
     public function login($email, $password) {
-        error_log("Login işlemi başladı.");
+        $errors = []; // Hata mesajlarını toplamak için bir dizi
+        $errors[] = "Login işlemi başladı.";
+    
         // Kullanıcıyı veritabanından al
-        try{
+        try {
             $user = $this->crud->read('users', ['email' => $email]);
             if (!$user) {
-                error_log("Kullanıcı bulunamadı: $email");
+                $errors[] = "Kullanıcı bulunamadı: $email";
                 return [
                     'success' => false,
-                    'message' => 'Invalid email or password.'
+                    'message' => 'Invalid email or password.',
+                    'errors' => $errors
                 ];
             }
-            error_log("Kullanıcı bulundu: " . json_encode($user));
+            $errors[] = "Kullanıcı bulundu: " . json_encode($user);
         } catch (Exception $e) {
-            error_log("Hata: " . $e->getMessage());
+            $errors[] = "Veritabanı hatası: " . $e->getMessage();
             return [
                 'success' => false,
-                'message' => 'An error occurred, please try again later.'
+                'message' => 'An error occurred, please try again later.',
+                'errors' => $errors
             ];
         }
+    
         // Şifre doğrulama
         if (!password_verify($password, $user['password'])) {
-            error_log("Şifre doğrulaması başarısız.");
+            $errors[] = "Şifre doğrulaması başarısız.";
             return [
                 'success' => false,
-                'message' => 'Invalid email or password.'
+                'message' => 'Invalid email or password.',
+                'errors' => $errors
             ];
         }
-        error_log("Şifre doğrulaması başarılı.");
-
+        $errors[] = "Şifre doğrulaması başarılı.";
+    
         // Kullanıcı doğrulama durumu
         $isVerified = $user['is_verified'] == 1;
         $role = $user['role'] ?? 'Guest';
-        error_log("Kullanıcı doğrulama durumu: " . ($isVerified ? "Doğrulandı" : "Doğrulanmadı"));
-        error_log("Kullanıcı rolü: $role");
-
+        $errors[] = "Kullanıcı doğrulama durumu: " . ($isVerified ? "Doğrulandı" : "Doğrulanmadı");
+        $errors[] = "Kullanıcı rolü: $role";
+    
         // JWT oluşturma
-        try{
-        $secretKey = $_ENV['JWT_SECRET'];
-        if(empty($secretKey)){
-            throw new Exception('JWT secret key is not set.');
-        }
-        $payload = [
-            'iss' => 'https://seaofsea.com/public/api/login.php',
-            'aud' => 'https://seaofsea.com',
-            'iat' => time(),
-            'exp' => time() + 3600,
-            'data' => [
-                'id' => $user['id'],
-                'email' => $user['email'],
-                'name' => $user['name'],
-                'role' => $role,
-                'is_verified' => $isVerified
-            ]
-        ];
-        $jwt = JWT::encode($payload, $secretKey, 'HS256');
-        error_log("JWT oluşturuldu.");
+        try {
+            $secretKey = $_ENV['JWT_SECRET'];
+            if (empty($secretKey)) {
+                throw new Exception('JWT secret key is not set.');
+            }
+            $payload = [
+                'iss' => 'https://seaofsea.com/public/api/login.php',
+                'aud' => 'https://seaofsea.com',
+                'iat' => time(),
+                'exp' => time() + 3600,
+                'data' => [
+                    'id' => $user['id'],
+                    'email' => $user['email'],
+                    'name' => $user['name'],
+                    'role' => $role,
+                    'is_verified' => $isVerified
+                ]
+            ];
+            $jwt = JWT::encode($payload, $secretKey, 'HS256');
+            $errors[] = "JWT oluşturuldu.".$jwt;
         } catch (Exception $e) {
-            error_log("JWT oluşturma hatası: " . $e->getMessage());
+            $errors[] = "JWT oluşturma hatası: " . $e->getMessage();
             return [
                 'success' => false,
-                'message' => 'An error occurred, please try again later. JWT oluşturma hatası: ' . $e->getMessage()
+                'message' => 'An error occurred, please try again later.',
+                'errors' => $errors
             ];
         }
+    
+        // Başarılı yanıt
+        $errors[] = "Login işlemi başarılı.";
         return [
             'success' => true,
             'message' => $isVerified 
@@ -171,9 +181,11 @@ class UserHandler {
                 'token' => $jwt,
                 'is_verified' => $isVerified,
                 'role' => $role
-            ]
+            ],
+            'errors' => $errors // Hataları da döndür
         ];
     }
+    
     
     public function sendVerificationEmail($email, $token) {
         $subject = "Email Verification";

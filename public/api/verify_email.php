@@ -22,7 +22,7 @@ if ($token) {
             $message = "The verification link has expired.";
             $showResendButton = true; // Token süresi dolmuşsa butonu göster
         } else {
-            $updated = $crud->update('users', ['is_verified' => 1], ['id' => $verification['user_id']]);
+            $updated = $crud->update('users', ['is_verified' => 1, 'role_id' => 2], ['id' => $verification['user_id']]);
             if ($updated) {
                 $crud->delete('verification_tokens', ['id' => $verification['id']]);
                 $message = "Your email has been successfully verified!";
