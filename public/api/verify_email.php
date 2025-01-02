@@ -1,16 +1,17 @@
 <?php
-require_once __DIR__ . '/../../lib/handlers/DatabaseHandler.php';
 require_once __DIR__ . '/../../lib/handlers/CRUDHandlers.php';
 require_once __DIR__ . '/../../lib/handlers/MailHandler.php';
+require_once __DIR__ . '/../../lib/handlers/LoggerHandler.php';  // LoggerHandler'ı dahil ettik
 
 use Dotenv\Dotenv;
+use Monolog\Logger;
 
 $dotenv = Dotenv::createImmutable(__DIR__ . '/../../');
 $dotenv->load();
 
-$dbConnection = DatabaseHandler::getInstance()->getConnection();
-$crud = new CRUDHandler($dbConnection);
+$crud = new CRUDHandler();
 $mailHandler = new MailHandler();
+$logger = new LoggerHandler();  // LoggerHandler sınıfını başlat
 
 $token = $_GET['token'] ?? null;
 
@@ -26,19 +27,23 @@ if ($token) {
         if (strtotime($verification['expires_at']) < time()) {
             $message = "The verification link has expired.";
             $showResendButton = true; // Token süresi dolmuşsa butonu göster
+            $logger->log(Logger::WARNING, "Verification token expired", ['token' => $token]); // Hata loglama
         } else {
             $updated = $crud->update('users', ['is_verified' => 1, 'role_id' => 2], ['id' => $verification['user_id']]);
             if ($updated) {
                 $crud->delete('verification_tokens', ['id' => $verification['id']]);
                 $message = "Your email has been successfully verified!";
                 $messageType = "success";
+                $logger->log(Logger::INFO, "Email successfully verified", ['user_id' => $verification['user_id']]); // Başarı loglama
             } else {
                 $message = "Failed to verify email. Please try again.";
+                $logger->log(Logger::ERROR, "Email verification failed", ['user_id' => $verification['user_id']]); // Hata loglama
             }
         }
     } else {
         $message = "Invalid verification token.";
         $showResendButton = true; // Geçersiz token için butonu göster
+        $logger->log(Logger::ERROR, "Invalid verification token", ['token' => $token]); // Hata loglama
     }
 }
 
@@ -51,6 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_email'])) {
         if (!$user) {
             $message = "No user found with the provided email.";
             $messageType = "error";
+            $logger->log(Logger::ERROR, "User not found for email", ['email' => $email]); // Hata loglama
         } else {
             $newToken = bin2hex(random_bytes(16));
             $expiresAt = date('Y-m-d H:i:s', strtotime('+1 hour'));
@@ -73,10 +79,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_email'])) {
 
             $message = "A new verification email has been sent to $email.";
             $messageType = "info";
+            $logger->log(Logger::INFO, "Verification email resent", ['email' => $email]); // Başarı loglama
         }
     } else {
         $message = "Invalid email format.";
         $messageType = "error";
+        $logger->log(Logger::ERROR, "Invalid email format", ['email' => $email]); // Hata loglama
     }
 }
 ?>
@@ -87,60 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_email'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= htmlspecialchars($title) ?></title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f9f9f9;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .container {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-            text-align: center;
-            max-width: 400px;
-            width: 100%;
-        }
-        .message {
-            font-size: 16px;
-            margin-bottom: 20px;
-        }
-        .message.success {
-            color: #28a745;
-        }
-        .message.error {
-            color: #dc3545;
-        }
-        .message.info {
-            color: #007bff;
-        }
-        form {
-            margin-top: 20px;
-        }
-        input[type="email"] {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-        }
-        button {
-            padding: 10px 20px;
-            background: #007bff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #0056b3;
-        }
-    </style>
+    <link rel="stylesheet" href="../../lib/css/mail.css">
 </head>
 <body>
     <div class="container">

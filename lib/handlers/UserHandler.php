@@ -1,18 +1,23 @@
 <?php
-require_once __DIR__ . '/DatabaseHandler.php';
-require_once __DIR__ . '/CRUDHandlers.php';
-require_once __DIR__ . '/MailHandler.php';
-require_once __DIR__ . '/../../vendor/autoload.php';
 
+require_once __DIR__ . '/MailHandler.php';
+use Illuminate\Database\Capsule\Manager as Capsule;
 use Firebase\JWT\JWT;
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
 
 class UserHandler {
-    private $crud;
     private $mailHandler;
+    private $crud;
+    private static $logger;
 
-    public function __construct($dbConnection) {
-        $this->crud = new CRUDHandler($dbConnection);
+    public function __construct() {
         $this->mailHandler = new MailHandler();
+        $this->crud = new CRUDHandler(); // CRUDHandler ile uyumlu hale geldi
+        if (!self::$logger) {
+            self::$logger = new Logger('database');
+            self::$logger->pushHandler(new StreamHandler(__DIR__ . '/../../logs/database.log', Logger::ERROR));
+        }
     }
 
     // Kullanıcı kaydı ve doğrulama
@@ -30,8 +35,7 @@ class UserHandler {
         if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Valid email is required.";
         } else {
-            // Email kontrolü
-            $existingUser = $this->crud->read('users', ['email' => $email]);
+            $existingUser = Capsule::table('users')->where('email', $email)->first();
             if ($existingUser) {
                 $errors[] = "Email is already registered.";
             }
@@ -52,18 +56,13 @@ class UserHandler {
             'email' => $email,
             'password' => $hashedPassword,
             'is_verified' => 0,
-            'role_id' => 3 // Default role: Guest
+            'role_id' => 3
         ];
 
         $verificationToken = bin2hex(random_bytes(16));
         try {
-            $userId = $this->crud->create('users', $userData, true);
-
-            if (!$userId) {
-                throw new Exception('User registration failed.');
-            }
-
-            // Doğrulama tokeni ekle
+            // Kullanıcı ve doğrulama tokeni ekle
+            $userId = $this->crud->create('users', $userData);
             $this->crud->create('verification_tokens', [
                 'user_id' => $userId,
                 'token' => $verificationToken,
@@ -77,7 +76,8 @@ class UserHandler {
 
             return ['success' => true, 'message' => 'User Registered. Please check your email for verification.'];
         } catch (Exception $e) {
-            return ['success' => false, 'message' => $e->getMessage()];
+            $this->logError($e);
+            return ['success' => false, 'message' => 'An error occurred during registration.'];
         }
     }
 
@@ -98,8 +98,8 @@ class UserHandler {
         }
 
         // Kullanıcı kontrolü
-        $user = $this->crud->read('users', ['email' => $email]);
-        if (!$user || !password_verify($password, $user['password'])) {
+        $user = Capsule::table('users')->where('email', $email)->first();
+        if (!$user || !password_verify($password, $user->password)) {
             return ['success' => false, 'message' => 'Invalid email or password.'];
         }
 
@@ -111,22 +111,22 @@ class UserHandler {
             'iat' => time(),
             'exp' => time() + 3600,
             'data' => [
-                'id' => $user['id'],
-                'email' => $user['email'],
-                'name' => $user['name'],
-                'role' => $user['role_id'],
-                'is_verified' => $user['is_verified']
+                'id' => $user->id,
+                'email' => $user->email,
+                'name' => $user->name,
+                'role' => $user->role_id,
+                'is_verified' => $user->is_verified
             ]
         ];
         $jwt = JWT::encode($payload, $secretKey, 'HS256');
 
         return [
             'success' => true,
-            'message' => $user['is_verified'] ? 'Login successful.' : 'Please verify your email.',
+            'message' => $user->is_verified ? 'Login successful.' : 'Please verify your email.',
             'data' => [
                 'token' => $jwt,
-                'is_verified' => $user['is_verified'],
-                'role' => $user['role_id']
+                'is_verified' => $user->is_verified,
+                'role' => $user->role_id
             ]
         ];
     }
@@ -135,13 +135,9 @@ class UserHandler {
     public function getUsersWithRoles() {
         return $this->crud->read(
             table: 'users',
-            columns: ['users.name', 'roles.name AS role_name'],
+            columns: ['users.name', 'roles.name as role_name'],
             joins: [
-                [
-                    'type' => 'INNER',
-                    'table' => 'roles',
-                    'on' => 'users.role_id = roles.id'
-                ]
+                ['table' => 'roles', 'on1' => 'users.role_id', 'operator' => '=', 'on2' => 'roles.id']
             ],
             fetchAll: true
         );
@@ -160,5 +156,9 @@ class UserHandler {
 
         return $this->mailHandler->sendMail($email, $subject, $body);
     }
+
+    // Hata loglama
+    private function logError($exception) {
+        self::$logger->error('UserHandler Error: ' . $exception->getMessage(), ['exception' => $exception]);
+    }
 }
-?>

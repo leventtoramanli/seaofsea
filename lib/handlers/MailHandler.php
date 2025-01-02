@@ -1,37 +1,51 @@
 <?php
+
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
 
 require __DIR__ . '/../../vendor/autoload.php'; // PHPMailer autoload
 
 class MailHandler {
     private $mailer;
+    private static $logger;
 
     public function __construct() {
         $this->mailer = new PHPMailer(true);
 
-        // SMTP yapılandırması
-        $this->mailer->isSMTP();
-        $this->mailer->Host = 'mail.seaofsea.com';
-        $this->mailer->SMTPAuth = true;
-        $this->mailer->SMTPDebug = 2; // Debug seviyesi
-        $this->mailer->Debugoutput = function ($str, $level) {
-            file_put_contents('smtp_debug.log', date('Y-m-d H:i:s') . " - $str\n", FILE_APPEND);
-        };
-        $this->mailer->Username = 'no-reply@seaofsea.com';
-        $this->mailer->Password = 'r*X4N*U}]W~c';
-        $this->mailer->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-        $this->mailer->Port = 465;
+        // Logger yapılandırması
+        if (!self::$logger) {
+            self::$logger = new Logger('mailer');
+            self::$logger->pushHandler(new StreamHandler(__DIR__ . '/../../logs/mail.log', Logger::ERROR));
+        }
 
-        // Gönderen bilgileri
-        $this->mailer->setFrom('no-reply@seaofsea.com', 'Sea of Sea');
+        try {
+            // SMTP yapılandırması
+            $this->mailer->isSMTP();
+            $this->mailer->Host = $_ENV['MAIL_HOST']; // ENV'den al
+            $this->mailer->SMTPAuth = true;
+            $this->mailer->Username = $_ENV['MAIL_USERNAME']; // ENV'den al
+            $this->mailer->Password = $_ENV['MAIL_PASSWORD']; // ENV'den al
+            $this->mailer->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+            $this->mailer->Port = $_ENV['MAIL_PORT']; // ENV'den al
+
+            // Gönderen bilgileri
+            $this->mailer->setFrom($_ENV['MAIL_FROM_ADDRESS'], $_ENV['MAIL_FROM_NAME']);
+        } catch (Exception $e) {
+            $this->logError($e, 'Mail configuration failed');
+            throw new Exception('Mail configuration failed.');
+        }
     }
 
     public function sendMail($to, $subject, $body, $isHtml = true) {
         try {
+            // Alıcı bilgilerini ekle
+            $this->mailer->clearAddresses(); // Önceki adresleri temizle
             $this->mailer->addAddress($to);
             $this->mailer->Subject = $subject;
 
+            // Gövdeyi ayarla
             if ($isHtml) {
                 $this->mailer->isHTML(true);
                 $this->mailer->Body = $body;
@@ -41,11 +55,17 @@ class MailHandler {
                 $this->mailer->Body = $body;
             }
 
+            // Maili gönder
             $this->mailer->send();
             return true;
         } catch (Exception $e) {
-            error_log("Mail gönderme hatası: {$this->mailer->ErrorInfo}");
+            $this->logError($e, 'Mail sending failed');
             return false;
         }
+    }
+
+    // Hata loglama
+    private function logError($exception, $message) {
+        self::$logger->error($message, ['exception' => $exception]);
     }
 }

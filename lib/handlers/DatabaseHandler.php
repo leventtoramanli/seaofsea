@@ -1,51 +1,37 @@
 <?php
-require_once __DIR__ . '/../../vendor/autoload.php';
 
-use Dotenv\Dotenv;
-use PDO;
-use PDOException;
+use Illuminate\Database\Capsule\Manager as Capsule;
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
 
 class DatabaseHandler {
-    private static $instance = null; // Singleton için tekil örnek
-    private $connection;
+    private static $logger;
 
-    // Yapıcı metod (Singleton ile dışarıdan çağrılamaz)
-    private function __construct() {
-        // .env dosyasını yükle
-        $dotenv = Dotenv::createImmutable(__DIR__ . '/../../');
-        $dotenv->load();
-
-        $dsn = "mysql:host={$_ENV['DB_HOST']};dbname={$_ENV['DB_NAME']};charset=utf8mb4";
-        $user = $_ENV['DB_USER'];
-        $password = $_ENV['DB_PASSWORD'];
+    public function __construct() {
+        if (!self::$logger) {
+            self::$logger = new Logger('database');
+            self::$logger->pushHandler(new StreamHandler(__DIR__ . '/../../logs/database.log', Logger::ERROR));
+        }
 
         try {
-            $this->connection = new PDO($dsn, $user, $password, [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, // Hata yönetimi için
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, // Varsayılan olarak associative array döndür
-                PDO::ATTR_EMULATE_PREPARES => false // Gerçek prepare statement kullan
+            $capsule = new Capsule;
+
+            $capsule->addConnection([
+                'driver' => 'mysql',
+                'host' => $_ENV['DB_HOST'],
+                'database' => $_ENV['DB_NAME'],
+                'username' => $_ENV['DB_USER'],
+                'password' => $_ENV['DB_PASSWORD'],
+                'charset' => 'utf8mb4',
+                'collation' => 'utf8mb4_unicode_ci',
+                'prefix' => '',
             ]);
-        } catch (PDOException $e) {
-            error_log("Database connection failed: " . $e->getMessage());
-            throw new Exception("Database connection failed.");
+
+            $capsule->setAsGlobal();
+            $capsule->bootEloquent();
+        } catch (\Exception $e) {
+            self::$logger->error('Database connection failed', ['exception' => $e]);
+            throw new \Exception('Database connection failed: ' . $e->getMessage());
         }
-    }
-
-    // Singleton getInstance metodu
-    public static function getInstance() {
-        if (self::$instance === null) {
-            self::$instance = new DatabaseHandler();
-        }
-        return self::$instance;
-    }
-
-    // PDO bağlantısını döndür
-    public function getConnection() {
-        return $this->connection;
-    }
-
-    // Bağlantıyı kapat
-    public function closeConnection() {
-        $this->connection = null;
     }
 }
