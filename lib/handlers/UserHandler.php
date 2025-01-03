@@ -58,7 +58,7 @@ class UserHandler {
     public function login($data) {
         $errors = $this->validateLoginData($data);
         if (!empty($errors)) {
-            return ['success' => false, 'errors' => $errors];
+            return ['success' => false, 'message' => 'Please fill in all required fields.', 'errors' => $errors];
         }
 
         $user = Capsule::table('users')->where('email', $data['email'])->first();
@@ -196,7 +196,8 @@ class UserHandler {
     
     public function validateJWT($token) {
         try {
-            $decoded = JWT::decode($token, $_ENV['JWT_SECRET'], ['HS256']);
+            $algorithms = ['HS256'];
+            $decoded = JWT::decode($token, $_ENV['JWT_SECRET'], $algorithms);
             getLogger()->info('JWT validated successfully.', [
                 'user_id' => $decoded->data->id,
                 'email' => $decoded->data->email

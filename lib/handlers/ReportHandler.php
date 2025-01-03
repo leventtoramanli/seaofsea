@@ -25,11 +25,12 @@ class ReportHandler {
     public function getDailyActivityReport($date) {
         return $this->crud->read(
             table: 'logs',
-            conditions: [
-                ['date' => ['operator' => '=', 'value' => $date]]
-            ],
+            conditions: ['date' => ['operator' => '=', 'value' => $date]],
             columns: ['action', 'COUNT(*) as total'],
-            additionaly: ['groupBy' => ['action'], 'orderBy' => ['total' => 'desc']],
+            additionaly: [
+                'groupBy' => ['action'],
+                'orderBy' => ['total' => 'desc']
+            ],
             fetchAll: true
         );
     }

@@ -47,10 +47,19 @@ class CRUDHandler {
             }
 
             foreach ($additionaly as $method => $args) {
-                if (method_exists($query, $method)) {
+                // `groupBy` ve `orderBy` özel işleme ihtiyaç duyar
+                if ($method === 'groupBy') {
+                    $query->groupBy(...$args);
+                } elseif ($method === 'orderBy') {
+                    foreach ($args as $column => $direction) {
+                        $query->orderBy($column, $direction);
+                    }
+                } elseif (method_exists($query, $method)) {
                     $query->$method(...$args);
+                } else {
+                    throw new \Exception("Unsupported method: {$method}");
                 }
-            }
+            }            
 
             if (!empty($pagination)) {
                 $query->limit($pagination['limit'])->offset($pagination['offset']);
