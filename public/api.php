@@ -8,10 +8,11 @@ require_once __DIR__ . '/../lib/handlers/DatabaseHandler.php';
 require_once __DIR__ . '/../lib/handlers/CRUDHandlers.php';
 require_once __DIR__ . '/../lib/handlers/UserHandler.php';
 require_once __DIR__ . '/../lib/handlers/PasswordResetHandler.php';
-require_once __DIR__ . '/../lib/handlers/LoggerHandler.php';
+require_once __DIR__ . '/../lib/handlers/LoggerHelper.php';
 
 use Dotenv\Dotenv;
 use Monolog\Logger;
+//use Monolog\Handler\StreamHandler;
 
 // JSON yanıt fonksiyonu
 function jsonResponse($success, $message, $data = null, $errors = null) {
@@ -24,14 +25,15 @@ function jsonResponse($success, $message, $data = null, $errors = null) {
     exit;
 }
 
+$logger = new LoggerHandler();
+
 try {
-    // .env dosyasını yükle
-    $dotenv = Dotenv::createImmutable(__DIR__ . '/../../');
-    $dotenv->load();
+    $logger->log(Logger::INFO, "API Request started");
+} catch (Exception $e) {
+    error_log('API request log failed: ' . $e->getMessage());
+}
 
-    // Logger Handler'ı başlat
-    $logger = new LoggerHandler();
-
+try {
     // İstek verilerini al
     $data = json_decode(file_get_contents('php://input'), true);
     $endpoint = $_GET['endpoint'] ?? null;
@@ -39,6 +41,8 @@ try {
     if (!$endpoint) {
         jsonResponse(false, 'Endpoint is required.');
     }
+
+    $logger->log(Logger::INFO, "API Request received", ['endpoint' => $endpoint]);
 
     switch ($endpoint) {
         case 'login':
@@ -48,7 +52,7 @@ try {
             break;
 
         case 'register':
-            $userHandler = new UserHandler();  // Aynı şekilde, dbConnection'a gerek yok
+            $userHandler = new UserHandler();  
             $response = $userHandler->validateAndRegisterUser($data);
             jsonResponse($response['success'], $response['message'], $response['data'], $response['errors']);
             break;
@@ -86,7 +90,7 @@ try {
     }
 } catch (Exception $e) {
     // Hataları logla ve genel bir hata yanıtı gönder
-    $logger->log(Logger::ERROR, 'API Error: ' . $e->getMessage(), ['exception' => $e]);  // Hata loglama
+    $logger->log(Logger::ERROR, 'API Error: ' . $e->getMessage(), ['exception' => $e]);
     jsonResponse(false, 'An unexpected error occurred.');
 }
 

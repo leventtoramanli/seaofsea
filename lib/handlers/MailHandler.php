@@ -23,10 +23,10 @@ class MailHandler {
         try {
             // SMTP yapılandırması
             $this->mailer->isSMTP();
-            $this->mailer->Host = $_ENV['MAIL_HOST']; // ENV'den al
+            $this->mailer->Host = $_ENV['MAIL_HOST'] ?: 'mail.seaofsea.com'; // ENV'den al
             $this->mailer->SMTPAuth = true;
-            $this->mailer->Username = $_ENV['MAIL_USERNAME']; // ENV'den al
-            $this->mailer->Password = $_ENV['MAIL_PASSWORD']; // ENV'den al
+            $this->mailer->Username = $_ENV['MAIL_USERNAME'] ?: 'no-reply@seaofsea.com'; // ENV'den al
+            $this->mailer->Password = $_ENV['MAIL_PASSWORD'] ?: 'r*X4N*U}]W~c'; // ENV'den al
             $this->mailer->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
             $this->mailer->Port = $_ENV['MAIL_PORT']; // ENV'den al
 
