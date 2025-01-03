@@ -1,31 +1,24 @@
 <?php
 
 use Illuminate\Database\Capsule\Manager as Capsule;
-use Monolog\Logger;
-use Monolog\Handler\StreamHandler;
 
 class CRUDHandler {
     private static $logger;
 
     public function __construct() {
         if (!self::$logger) {
-            self::$logger = new Logger('database');
-            self::$logger->pushHandler(new StreamHandler(__DIR__ . '/../../logs/database.log', Logger::ERROR));
+            self::$logger = getLogger(); // Merkezi logger
         }
     }
 
-    // CREATE işlemi
+    // CREATE
     public function create(string $table, array $data): int|bool {
-        try {
-            $insertId = Capsule::table($table)->insertGetId($data);
-            return $insertId;
-        } catch (\Exception $e) {
-            $this->logError($e, 'Create operation failed');
-            return false;
-        }
+        return $this->executeQuery(function () use ($table, $data) {
+            return DatabaseHandler::getConnection()->table($table)->insertGetId($data);
+        }, 'Create operation failed');
     }
 
-    // READ işlemi
+    // READ
     public function read(
         string $table,
         array $conditions = [],
@@ -35,105 +28,90 @@ class CRUDHandler {
         array $pagination = [],
         array $additionaly = []
     ): mixed {
-        try {
+        return $this->executeQuery(function () use ($table, $conditions, $columns, $fetchAll, $joins, $pagination, $additionaly) {
             $query = Capsule::table($table)->select($columns);
 
-            // JOIN ekle
             foreach ($joins as $join) {
-                $type = $join['type'] ?? 'inner'; // Varsayılan JOIN türü
+                $type = $join['type'] ?? 'inner';
                 $query->$type($join['table'], $join['on1'], $join['operator'], $join['on2']);
             }
 
-            // WHERE koşulları ekle
             foreach ($conditions as $key => $value) {
-                if (is_array($value)) {
-                    $operator = $value['operator'] ?? '=';
-                    $query->where($key, $operator, $value['value']);
-                } else {
-                    $query->where($key, $value);
-                }
+                $this->applyCondition($query, $key, $value);
             }
 
-            // Extra ekle
             foreach ($additionaly as $method => $args) {
                 if (method_exists($query, $method)) {
                     $query->$method(...$args);
                 }
             }
 
-            // Pagination ekle
             if (!empty($pagination)) {
                 $query->limit($pagination['limit'])->offset($pagination['offset']);
             }
 
             return $fetchAll ? $query->get() : $query->first();
-        } catch (\Exception $e) {
-            $this->logError($e, 'Read operation failed');
-            return false;
-        }
+        }, 'Read operation failed');
     }
 
-    // UPDATE işlemi
+    // UPDATE
     public function update(string $table, array $data, array $conditions): int|bool {
-        try {
+        return $this->executeQuery(function () use ($table, $data, $conditions) {
             $query = Capsule::table($table);
-
             foreach ($conditions as $key => $value) {
-                $query->where($key, $value);
+                $this->applyCondition($query, $key, $value);
             }
-
             return $query->update($data);
-        } catch (\Exception $e) {
-            $this->logError($e, 'Update operation failed');
-            return false;
-        }
+        }, 'Update operation failed');
     }
 
-    // DELETE işlemi
+    // DELETE
     public function delete(string $table, array $conditions): int|bool {
-        try {
+        return $this->executeQuery(function () use ($table, $conditions) {
             $query = Capsule::table($table);
-
             foreach ($conditions as $key => $value) {
-                $query->where($key, $value);
+                $this->applyCondition($query, $key, $value);
             }
-
             return $query->delete();
-        } catch (\Exception $e) {
-            $this->logError($e, 'Delete operation failed');
-            return false;
-        }
+        }, 'Delete operation failed');
     }
 
-    // COUNT işlemi
+    // COUNT
     public function count(string $table, array $conditions = []): int {
-        try {
+        return $this->executeQuery(function () use ($table, $conditions) {
             $query = Capsule::table($table);
-
             foreach ($conditions as $key => $value) {
-                $query->where($key, $value);
+                $this->applyCondition($query, $key, $value);
             }
-
             return $query->count();
-        } catch (\Exception $e) {
-            $this->logError($e, 'Count operation failed');
-            return 0;
-        }
+        }, 'Count operation failed', 0);
     }
 
-    // Advanced Query
+    // ADVANCED QUERY
     public function advancedQuery(string $table, callable $callback): mixed {
-        try {
+        return $this->executeQuery(function () use ($table, $callback) {
             $query = Capsule::table($table);
             return $callback($query);
+        }, 'Advanced query failed');
+    }
+
+    // Common Query Executor
+    private function executeQuery(callable $callback, string $errorMessage, $default = false): mixed {
+        try {
+            return $callback();
         } catch (\Exception $e) {
-            $this->logError($e, 'Advanced query failed');
-            return false;
+            self::$logger->error($errorMessage, ['exception' => $e]);
+            return $default;
         }
     }
 
-    // Hata loglama
-    private function logError($exception, $message) {
-        self::$logger->error($message, ['exception' => $exception]);
+    // Apply Condition Helper
+    private function applyCondition($query, string $key, $value): void {
+        if (is_array($value)) {
+            $operator = $value['operator'] ?? '=';
+            $query->where($key, $operator, $value['value']);
+        } else {
+            $query->where($key, $value);
+        }
     }
 }
