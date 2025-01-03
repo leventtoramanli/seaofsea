@@ -69,13 +69,11 @@ class DatabaseHandler {
         try {
             $pdo = self::getConnection()->getPdo();
             $query = $pdo->query("SHOW TABLES");
-            $tables = $query->fetchAll();
-
+            $tables = $query->fetchAll(PDO::FETCH_ASSOC); // Tablo adlarını dizi olarak çek
             if (empty($tables)) {
                 throw new \Exception('Database connected, but no tables found.');
             }
-
-            return $tables;
+            return $tables; // Tablo adlarını döndür
         } catch (\Exception $e) {
             self::$logger->error('Test connection failed.', ['exception' => $e]);
             throw $e;
