@@ -32,8 +32,14 @@ class CRUDHandler {
             $query = Capsule::table($table)->select($columns);
 
             foreach ($joins as $join) {
-                $type = $join['type'] ?? 'inner';
-                $query->$type($join['table'], $join['on1'], $join['operator'], $join['on2']);
+                $type = strtolower($join['type'] ?? 'inner'); // Varsayılan INNER JOIN
+                if ($type === 'inner') {
+                    $query->join($join['table'], $join['on1'], $join['operator'], $join['on2']);
+                } elseif ($type === 'left') {
+                    $query->leftJoin($join['table'], $join['on1'], $join['operator'], $join['on2']);
+                } else {
+                    throw new \Exception("Unsupported join type: {$type}");
+                }
             }
 
             foreach ($conditions as $key => $value) {

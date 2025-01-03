@@ -1,13 +1,13 @@
 <?php
-
-require_once __DIR__ . '/MailHandler.php';
-require_once __DIR__ . '/CRUDHandler.php';
+require_once __DIR__ . '/../../bootstrap.php';
+require_once __DIR__ . '/DatabaseHandler.php';
+require_once __DIR__ . '/CRUDHandlers.php';
 
 class ReportHandler {
     private $crud;
 
     public function __construct() {
-        // CRUDHandler nesnesi
+        // CRUDHandler nesnesi oluştur
         $this->crud = new CRUDHandler();
     }
 

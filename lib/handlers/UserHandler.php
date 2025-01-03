@@ -1,10 +1,10 @@
 <?php
 
 require_once __DIR__ . '/MailHandler.php';
+require_once __DIR__ . '/CRUDHandlers.php';
+
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Firebase\JWT\JWT;
-use Monolog\Logger;
-use Monolog\Handler\StreamHandler;
 
 class UserHandler {
     private $mailHandler;
@@ -13,47 +13,23 @@ class UserHandler {
 
     public function __construct() {
         $this->mailHandler = new MailHandler();
-        $this->crud = new CRUDHandler(); // CRUDHandler ile uyumlu hale geldi
+        $this->crud = new CRUDHandler();
         if (!self::$logger) {
-            self::$logger = new Logger('database');
-            self::$logger->pushHandler(new StreamHandler(__DIR__ . '/../../logs/database.log', Logger::ERROR));
+            self::$logger = getLogger(); // Merkezi logger
         }
     }
 
-    // Kullanıcı kaydı ve doğrulama
     public function validateAndRegisterUser($data) {
-        $errors = [];
-
-        // Alan doğrulama
-        $name = trim($data['name'] ?? '');
-        $surname = trim($data['surname'] ?? '');
-        $email = trim($data['email'] ?? '');
-        $password = $data['password'] ?? '';
-
-        if (empty($name)) $errors[] = "Name is required.";
-        if (empty($surname)) $errors[] = "Surname is required.";
-        if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $errors[] = "Valid email is required.";
-        } else {
-            $existingUser = Capsule::table('users')->where('email', $email)->first();
-            if ($existingUser) {
-                $errors[] = "Email is already registered.";
-            }
-        }
-        if (empty($password) || !preg_match("/^(?=.*[a-z])(?=.*[A-Z]).{6,}$/", $password)) {
-            $errors[] = "Password must be at least 6 characters long, include one uppercase letter, and one lowercase letter.";
-        }
-
+        $errors = $this->validateUserData($data);
         if (!empty($errors)) {
             return ['success' => false, 'errors' => $errors];
         }
 
-        // Kullanıcı oluştur
-        $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
+        $hashedPassword = password_hash($data['password'], PASSWORD_BCRYPT);
         $userData = [
-            'name' => $name,
-            'surname' => $surname,
-            'email' => $email,
+            'name' => trim($data['name']),
+            'surname' => trim($data['surname']),
+            'email' => trim($data['email']),
             'password' => $hashedPassword,
             'is_verified' => 0,
             'role_id' => 3
@@ -61,7 +37,6 @@ class UserHandler {
 
         $verificationToken = bin2hex(random_bytes(16));
         try {
-            // Kullanıcı ve doğrulama tokeni ekle
             $userId = $this->crud->create('users', $userData);
             $this->crud->create('verification_tokens', [
                 'user_id' => $userId,
@@ -69,41 +44,132 @@ class UserHandler {
                 'expires_at' => date('Y-m-d H:i:s', strtotime('+1 hour'))
             ]);
 
-            // Doğrulama emaili gönder
-            if (!$this->sendVerificationEmail($email, $verificationToken)) {
+            if (!$this->sendVerificationEmail($data['email'], $verificationToken)) {
                 throw new Exception('Verification email could not be sent.');
             }
 
-            return ['success' => true, 'message' => 'User Registered. Please check your email for verification.'];
+            return ['success' => true, 'message' => 'User registered successfully. Please check your email for verification.'];
         } catch (Exception $e) {
-            $this->logError($e);
+            self::$logger->error('Registration error.', ['exception' => $e]);
             return ['success' => false, 'message' => 'An error occurred during registration.'];
         }
     }
 
-    // Kullanıcı giriş işlemi
     public function login($data) {
-        $errors = [];
-        $email = trim($data['email'] ?? '');
-        $password = $data['password'] ?? '';
-
-        if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $errors[] = "Valid email is required.";
-        }
-        if (empty($password)) {
-            $errors[] = "Password is required.";
-        }
+        $errors = $this->validateLoginData($data);
         if (!empty($errors)) {
             return ['success' => false, 'errors' => $errors];
         }
 
-        // Kullanıcı kontrolü
-        $user = Capsule::table('users')->where('email', $email)->first();
-        if (!$user || !password_verify($password, $user->password)) {
+        $user = Capsule::table('users')->where('email', $data['email'])->first();
+        if (!$user || !password_verify($data['password'], $user->password)) {
+            getLogger()->warning('Login failed.', [
+                'email' => $data['email'],
+                'reason' => !$user ? 'User not found' : 'Incorrect password'
+            ]);
             return ['success' => false, 'message' => 'Invalid email or password.'];
         }
+        
 
-        // JWT oluştur
+        $jwt = $this->generateJWT($user);
+
+        return [
+            'success' => true,
+            'message' => $user->is_verified ? 'Login successful.' : 'Please verify your email.',
+            'data' => [
+                'token' => $jwt,
+                'is_verified' => $user->is_verified,
+                'role' => $user->role_id
+            ]
+        ];
+    }
+    public function updateUser($userId, $data) {
+        try {
+            $conditions = ['id' => $userId];
+            $updateResult = $this->crud->update('users', $data, $conditions);
+    
+            if ($updateResult) {
+                self::$logger->info('User updated successfully.', ['user_id' => $userId]);
+                return ['success' => true, 'message' => 'User updated successfully.'];
+            } else {
+                throw new Exception('No rows affected during update.');
+            }
+        } catch (Exception $e) {
+            self::$logger->error('User update failed.', ['exception' => $e]);
+            return ['success' => false, 'message' => 'Failed to update user.'];
+        }
+    }
+    public function deleteUser($userId) {
+        try {
+            $conditions = ['id' => $userId];
+            $deleteResult = $this->crud->delete('users', $conditions);
+    
+            if ($deleteResult) {
+                self::$logger->info('User deleted successfully.', ['user_id' => $userId]);
+                return ['success' => true, 'message' => 'User deleted successfully.'];
+            } else {
+                throw new Exception('No rows affected during deletion.');
+            }
+        } catch (Exception $e) {
+            self::$logger->error('User deletion failed.', ['exception' => $e]);
+            return ['success' => false, 'message' => 'Failed to delete user.'];
+        }
+    }        
+
+    public function getUsersWithRoles() {
+        return $this->crud->read(
+            table: 'users',
+            columns: ['users.name', 'roles.name as role_name'],
+            joins: [
+                ['table' => 'roles', 'on1' => 'users.role_id', 'operator' => '=', 'on2' => 'roles.id']
+            ],
+            fetchAll: true
+        );
+    }
+
+    public function sendVerificationEmail($email, $token) {
+        $subject = "Email Verification";
+        $verificationLink = "https://seaofsea.com/public/api/verify_email.php?token=$token";
+
+        $body = "
+            <h1>Email Verification</h1>
+            <p>Please click the link below to verify your email:</p>
+            <a href=\"$verificationLink\">Verify Email</a>
+        ";
+
+        return $this->mailHandler->sendMail($email, $subject, $body);
+    }
+
+    private function validateUserData($data) {
+        $errors = [];
+        if (empty($data['name'])) $errors[] = "Name is required.";
+        if (empty($data['surname'])) $errors[] = "Surname is required.";
+        if (empty($data['email']) || !filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Valid email is required.";
+        } else {
+            $existingUser = Capsule::table('users')->where('email', $data['email'])->first();
+            if ($existingUser) {
+                $errors[] = "Email is already registered.";
+            }
+        }
+        if (empty($data['password']) || !preg_match("/^(?=.*[a-z])(?=.*[A-Z]).{6,}$/", $data['password'])) {
+            $errors[] = "Password must be at least 6 characters long, include one uppercase letter, and one lowercase letter.";
+        }
+        return $errors;
+    }
+
+    private function validateLoginData($data) {
+        $errors = [];
+        if (empty($data['email']) || !filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Valid email is required.";
+        }
+        if (empty($data['password'])) {
+            $errors[] = "Password is required.";
+        }
+        return $errors;
+    }
+
+    private function generateJWT($user) {
         $secretKey = $_ENV['JWT_SECRET'];
         $payload = [
             'iss' => 'https://seaofsea.com',
@@ -118,47 +184,30 @@ class UserHandler {
                 'is_verified' => $user->is_verified
             ]
         ];
-        $jwt = JWT::encode($payload, $secretKey, 'HS256');
-
-        return [
-            'success' => true,
-            'message' => $user->is_verified ? 'Login successful.' : 'Please verify your email.',
-            'data' => [
-                'token' => $jwt,
-                'is_verified' => $user->is_verified,
-                'role' => $user->role_id
-            ]
-        ];
+    
+        $token = JWT::encode($payload, $secretKey, 'HS256');
+        getLogger()->info('JWT generated for user.', [
+            'user_id' => $user->id,
+            'email' => $user->email
+        ]);
+    
+        return $token;
     }
-
-    // Kullanıcı ve rollerini getir
-    public function getUsersWithRoles() {
-        return $this->crud->read(
-            table: 'users',
-            columns: ['users.name', 'roles.name as role_name'],
-            joins: [
-                ['table' => 'roles', 'on1' => 'users.role_id', 'operator' => '=', 'on2' => 'roles.id']
-            ],
-            fetchAll: true
-        );
-    }
-
-    // Doğrulama emaili gönder
-    public function sendVerificationEmail($email, $token) {
-        $subject = "Email Verification";
-        $verificationLink = "https://seaofsea.com/public/api/verify_email.php?token=$token";
-
-        $body = "
-            <h1>Email Verification</h1>
-            <p>Please click the link below to verify your email:</p>
-            <a href=\"$verificationLink\">Verify Email</a>
-        ";
-
-        return $this->mailHandler->sendMail($email, $subject, $body);
-    }
-
-    // Hata loglama
-    private function logError($exception) {
-        self::$logger->error('UserHandler Error: ' . $exception->getMessage(), ['exception' => $exception]);
+    
+    public function validateJWT($token) {
+        try {
+            $decoded = JWT::decode($token, $_ENV['JWT_SECRET'], ['HS256']);
+            getLogger()->info('JWT validated successfully.', [
+                'user_id' => $decoded->data->id,
+                'email' => $decoded->data->email
+            ]);
+            return $decoded->data;
+        } catch (\Exception $e) {
+            getLogger()->warning('JWT validation failed.', [
+                'error' => $e->getMessage(),
+                'token_snippet' => substr($token, 0, 10) . '...' // Token'ın tamamını loglamayın
+            ]);
+            throw new Exception('Invalid or expired token.');
+        }
     }
 }
