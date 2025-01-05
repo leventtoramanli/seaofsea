@@ -3,6 +3,7 @@
 use Illuminate\Database\Capsule\Manager as Capsule;
 
 class DatabaseHandler {
+    private static $capsule; // Eloquent bağlantısı
     private static $logger;
 
     public function __construct() {
@@ -10,41 +11,49 @@ class DatabaseHandler {
             self::$logger = getLogger(); // Merkezi logger
         }
 
-        try {
-            self::$logger->info('Initializing database connection.');
+        if (!self::$capsule) {
+            try {
+                self::$logger->info('Initializing database connection.');
 
-            $requiredEnv = ['DB_HOST', 'DB_NAME', 'DB_USER'];
-            foreach ($requiredEnv as $key) {
-                if (empty($_ENV[$key])) {
-                    throw new \Exception("Environment variable {$key} is missing or empty.");
+                // Gerekli ortam değişkenlerini kontrol et
+                $requiredEnv = ['DB_HOST', 'DB_NAME', 'DB_USER'];
+                foreach ($requiredEnv as $key) {
+                    if (empty($_ENV[$key])) {
+                        throw new \Exception("Environment variable {$key} is missing or empty.");
+                    }
                 }
+
+                // Veritabanı bağlantısını yapılandır
+                self::$capsule = new Capsule;
+
+                self::$capsule->addConnection([
+                    'driver' => 'mysql',
+                    'host' => $_ENV['DB_HOST'] ?: '127.0.0.1',
+                    'database' => $_ENV['DB_NAME'],
+                    'username' => $_ENV['DB_USER'],
+                    'password' => $_ENV['DB_PASSWORD'] ?? '',
+                    'charset' => 'utf8mb4',
+                    'collation' => 'utf8mb4_unicode_ci',
+                    'prefix' => '',
+                ]);
+
+                self::$capsule->setAsGlobal();
+                self::$capsule->bootEloquent();
+
+                self::$logger->info('Database connection established successfully.');
+
+            } catch (\Exception $e) {
+                self::$logger->error('Database connection failed.', ['exception' => $e]);
+                throw $e;
             }
-
-            $capsule = new Capsule;
-
-            $capsule->addConnection([
-                'driver' => 'mysql',
-                'host' => $_ENV['DB_HOST'],
-                'database' => $_ENV['DB_NAME'],
-                'username' => $_ENV['DB_USER'],
-                'password' => $_ENV['DB_PASSWORD'] ?? '',
-                'charset' => 'utf8mb4',
-                'collation' => 'utf8mb4_unicode_ci',
-                'prefix' => '',
-            ]);
-
-            $capsule->setAsGlobal();
-            $capsule->bootEloquent();
-
-            self::$logger->info('Database connection established successfully.');
-        } catch (\Exception $e) {
-            self::$logger->error('Database connection failed.', ['exception' => $e]);
-            throw $e;
         }
     }
 
     public static function getConnection() {
-        return Capsule::connection();
+        if (!self::$capsule) {
+            new self(); // Sınıfı başlat ve bağlantıyı kur
+        }
+        return self::$capsule->getConnection();
     }
 
     public static function testConnection() {

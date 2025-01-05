@@ -15,7 +15,7 @@ $showResendButton = false;
 if ($token) {
     try {
         $verification = $crud->read('verification_tokens', ['token' => $token], fetchAll: false);
-
+        
         if ($verification) {
             if (strtotime($verification->expires_at) < time()) {
                 $crud->delete('verification_tokens', ['id' => $verification->id]);

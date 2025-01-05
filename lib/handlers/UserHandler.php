@@ -1,5 +1,4 @@
 <?php
-
 require_once __DIR__ . '/MailHandler.php';
 require_once __DIR__ . '/CRUDHandlers.php';
 
@@ -19,10 +18,30 @@ class UserHandler {
         }
     }
 
+    private function checkDatabase() {
+        $checked = false;
+        try {
+            $checked = DatabaseHandler::testConnection();
+        } catch (Exception $e) {
+            self::$logger->error('Database connection error.', ['exception' => $e]);
+            return ['success' => false, 'message' => 'Database connection error.'];
+        }
+        return $checked;
+    }
+
     public function validateAndRegisterUser($data) {
+        self::$logger->info('Validation Input Data', ['data' => $data]);
         $errors = $this->validateUserData($data);
         if (!empty($errors)) {
-            return ['success' => false, 'errors' => $errors];
+            self::$logger->warning('Validation Errors', ['errors' => $errors]);
+            return [
+                'success' => false,
+                'message' => $errors[0], // İlk hatayı kullanıcıya mesaj olarak göster
+                'errors' => $errors
+            ];
+        }
+        if (!$this->checkDatabase()) {
+            return ['success' => false, 'message' => 'Database connection error.'];
         }
 
         $hashedPassword = password_hash($data['password'], PASSWORD_BCRYPT);
@@ -34,7 +53,7 @@ class UserHandler {
             'is_verified' => 0,
             'role_id' => 3
         ];
-
+//echo $userData;
         $verificationToken = bin2hex(random_bytes(16));
         try {
             $userId = $this->crud->create('users', $userData);
@@ -43,16 +62,21 @@ class UserHandler {
                 'token' => $verificationToken,
                 'expires_at' => date('Y-m-d H:i:s', strtotime('+1 hour'))
             ]);
-
+        
             if (!$this->sendVerificationEmail($data['email'], $verificationToken)) {
                 throw new Exception('Verification email could not be sent.');
             }
-
+        
             return ['success' => true, 'message' => 'User registered successfully. Please check your email for verification.'];
         } catch (Exception $e) {
             self::$logger->error('Registration error.', ['exception' => $e]);
-            return ['success' => false, 'message' => 'An error occurred during registration.'];
-        }
+        
+            if (str_contains($e->getMessage(), 'email could not be sent')) {
+                return ['success' => false, 'message' => 'Failed to send verification email.'];
+            }
+        
+            return ['success' => false, 'message' => 'An error occurred during registration.', 'error' => $e->getMessage()];
+        }        
     }
 
     public function login($data) {
@@ -60,16 +84,25 @@ class UserHandler {
         if (!empty($errors)) {
             return ['success' => false, 'message' => 'Please fill in all required fields.', 'errors' => $errors];
         }
-
-        $user = Capsule::table('users')->where('email', $data['email'])->first();
+        if (!$this->checkDatabase()) {
+            return ['success' => false, 'message' => 'Database connection error.'];
+        }
+        try {
+            $user = Capsule::table('users')->where('email', $data['email'])->first();
+            if (!$user) {
+                return ['success' => false, 'message' => 'User not found.'];
+            }
+        } catch (Exception $e) {
+            self::$logger->error('Database query error.', ['exception' => $e]);
+            return ['success' => false, 'message' => 'Database query error.'];
+        }
         if (!$user || !password_verify($data['password'], $user->password)) {
-            getLogger()->warning('Login failed.', [
+            self::$logger->warning('Login failed.', [
                 'email' => $data['email'],
                 'reason' => !$user ? 'User not found' : 'Incorrect password'
             ]);
             return ['success' => false, 'message' => 'Invalid email or password.'];
         }
-        
 
         $jwt = $this->generateJWT($user);
 
@@ -79,15 +112,16 @@ class UserHandler {
             'data' => [
                 'token' => $jwt,
                 'is_verified' => $user->is_verified,
-                'role' => $user->role_id
+                'role' => (string) $user->role_id
             ]
         ];
     }
+
     public function updateUser($userId, $data) {
         try {
             $conditions = ['id' => $userId];
             $updateResult = $this->crud->update('users', $data, $conditions);
-    
+
             if ($updateResult) {
                 self::$logger->info('User updated successfully.', ['user_id' => $userId]);
                 return ['success' => true, 'message' => 'User updated successfully.'];
@@ -99,11 +133,12 @@ class UserHandler {
             return ['success' => false, 'message' => 'Failed to update user.'];
         }
     }
+
     public function deleteUser($userId) {
         try {
             $conditions = ['id' => $userId];
             $deleteResult = $this->crud->delete('users', $conditions);
-    
+
             if ($deleteResult) {
                 self::$logger->info('User deleted successfully.', ['user_id' => $userId]);
                 return ['success' => true, 'message' => 'User deleted successfully.'];
@@ -114,7 +149,7 @@ class UserHandler {
             self::$logger->error('User deletion failed.', ['exception' => $e]);
             return ['success' => false, 'message' => 'Failed to delete user.'];
         }
-    }        
+    }
 
     public function getUsersWithRoles() {
         return $this->crud->read(
@@ -184,29 +219,29 @@ class UserHandler {
                 'is_verified' => $user->is_verified
             ]
         ];
-    
+
         $token = JWT::encode($payload, $secretKey, 'HS256');
-        getLogger()->info('JWT generated for user.', [
+        self::$logger->info('JWT generated for user.', [
             'user_id' => $user->id,
             'email' => $user->email
         ]);
-    
+
         return $token;
     }
-    
+
     public function validateJWT($token) {
         try {
             $algorithms = ['HS256'];
             $decoded = JWT::decode($token, $_ENV['JWT_SECRET'], $algorithms);
-            getLogger()->info('JWT validated successfully.', [
+            self::$logger->info('JWT validated successfully.', [
                 'user_id' => $decoded->data->id,
                 'email' => $decoded->data->email
             ]);
             return $decoded->data;
-        } catch (\Exception $e) {
-            getLogger()->warning('JWT validation failed.', [
+        } catch (Exception $e) {
+            self::$logger->warning('JWT validation failed.', [
                 'error' => $e->getMessage(),
-                'token_snippet' => substr($token, 0, 10) . '...' // Token'ın tamamını loglamayın
+                'token_snippet' => substr($token, 0, 10) . '...'
             ]);
             throw new Exception('Invalid or expired token.');
         }

@@ -1,9 +1,11 @@
 <?php
+
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
 require_once __DIR__ . '/../vendor/autoload.php';
+require_once __DIR__ . '/../lib/handlers/DatabaseHandler.php';
 require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/../lib/handlers/UserHandler.php';
 require_once __DIR__ . '/../lib/handlers/PasswordResetHandler.php';
@@ -17,7 +19,6 @@ function jsonResponse($success, $message, $data = null, $errors = null) {
         'data' => $data ?? [],
         'errors' => $errors ?? []
     ]);
-    exit;
 }
 
 try {
@@ -27,24 +28,28 @@ try {
     $data = json_decode(file_get_contents('php://input'), true);
     $endpoint = $_GET['endpoint'] ?? null;
 
+
     if (!$endpoint) {
         jsonResponse(false, 'Endpoint is required.');
     }
-
-    $logger->info("API Request received", ['endpoint' => $endpoint]);
 
     // Endpoint yönlendirmesi
     switch ($endpoint) {
         case 'login':
             $userHandler = new UserHandler();
             $response = $userHandler->login($data);
-            jsonResponse($response['success'], $response['message'], $response['data']);
+            $data = $response['data'] ?? [];
+            $message = $response['message'] ?? null;
+        
+            jsonResponse($response['success'], $message, $data);
             break;
 
         case 'register':
             $userHandler = new UserHandler();
             $response = $userHandler->validateAndRegisterUser($data);
-            jsonResponse($response['success'], $response['message'], $response['data']);
+            $data = $response['data'] ?? [];
+            $message = $response['message'] ?? null;
+            jsonResponse($response['success'], $message, $data);
             break;
 
         case 'reset_password_request':
@@ -78,6 +83,13 @@ try {
                 jsonResponse(false, 'Failed to reset password.');
             }
             break;
+
+            case 'get_users_with_roles':
+                $userHandler = new UserHandler();
+                $response = $userHandler->getUsersWithRoles();
+                jsonResponse(true, 'Users retrieved successfully.', $response);
+                break;
+            
 
         default:
             jsonResponse(false, 'Invalid endpoint.');
