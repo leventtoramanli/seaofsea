@@ -53,7 +53,6 @@ class UserHandler {
             'is_verified' => 0,
             'role_id' => 3
         ];
-//echo $userData;
         $verificationToken = bin2hex(random_bytes(16));
         try {
             $userId = $this->crud->create('users', $userData);
@@ -134,6 +133,37 @@ class UserHandler {
         }
     }
 
+    public function refreshAccessToken($refreshToken) {
+        try {
+            $refreshTokenData = Capsule::table('refresh_tokens')->where('token', $refreshToken)->first();
+    
+            if (!$refreshTokenData) {
+                return ['success' => false, 'message' => 'Invalid refresh token.'];
+            }
+    
+            if (strtotime($refreshTokenData->expires_at) < time()) {
+                Capsule::table('refresh_tokens')->where('id', $refreshTokenData->id)->delete();
+                return ['success' => false, 'message' => 'Refresh token has expired.'];
+            }
+    
+            $user = Capsule::table('users')->where('id', $refreshTokenData->user_id)->first();
+            if (!$user) {
+                return ['success' => false, 'message' => 'User not found.'];
+            }
+    
+            $newAccessToken = $this->generateJWT($user);
+    
+            return [
+                'success' => true,
+                'message' => 'Access token refreshed successfully.',
+                'data' => ['access_token' => $newAccessToken]
+            ];
+        } catch (Exception $e) {
+            self::$logger->error('Error during token refresh.', ['exception' => $e]);
+            return ['success' => false, 'message' => 'An error occurred while refreshing token.'];
+        }
+    }
+    
     public function deleteUser($userId) {
         try {
             $conditions = ['id' => $userId];
@@ -210,7 +240,7 @@ class UserHandler {
             'iss' => 'https://seaofsea.com',
             'aud' => 'https://seaofsea.com',
             'iat' => time(),
-            'exp' => time() + 3600,
+            'exp' => time() + 60,
             'data' => [
                 'id' => $user->id,
                 'email' => $user->email,

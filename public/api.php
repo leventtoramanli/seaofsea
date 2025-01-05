@@ -89,6 +89,23 @@ try {
                 $response = $userHandler->getUsersWithRoles();
                 jsonResponse(true, 'Users retrieved successfully.', $response);
                 break;
+                case 'refresh_token':
+                    try {
+                        $refreshToken = $_POST['refresh_token'] ?? null;
+                
+                        if (!$refreshToken) {
+                            jsonResponse(false, 'Refresh token is required.');
+                        }
+                
+                        $userHandler = new UserHandler();
+                        $response = $userHandler->refreshAccessToken($refreshToken);
+                        jsonResponse($response['success'], $response['message'], $response['data']);
+                    } catch (Exception $e) {
+                        $logger->error('Error during token refresh.', ['exception' => $e]);
+                        jsonResponse(false, 'An error occurred while refreshing token.', null, ['error' => $e->getMessage()]);
+                    }
+                    break;
+                
             
 
         default:

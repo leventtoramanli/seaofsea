@@ -1,5 +1,10 @@
 <?php
+
+require_once __DIR__ . '/../../lib/handlers/DatabaseHandler.php';
 require_once __DIR__ . '/../../bootstrap.php';
+require_once __DIR__ . '/../../lib/handlers/CRUDHandlers.php';
+require_once __DIR__ . '/../../lib/handlers/MailHandler.php';
+
 
 $crud = new CRUDHandler();
 $mailHandler = new MailHandler();
@@ -15,7 +20,7 @@ $showResendButton = false;
 if ($token) {
     try {
         $verification = $crud->read('verification_tokens', ['token' => $token], fetchAll: false);
-        
+
         if ($verification) {
             if (strtotime($verification->expires_at) < time()) {
                 $crud->delete('verification_tokens', ['id' => $verification->id]);
