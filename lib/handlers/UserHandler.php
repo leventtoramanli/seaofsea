@@ -121,6 +121,8 @@ class UserHandler
 
         // Access Token oluştur
         $jwt = $this->generateJWT($user); // Access Token oluştur
+        $rememberMe = $data['remember_me'] ?? false;
+        $rememberTm = $rememberMe ? '+30 days' : '+1 hour';
 
         try {
             // Refresh Token kontrol et
@@ -132,7 +134,7 @@ class UserHandler
             if (!$refreshTokenData || strtotime($refreshTokenData->expires_at) < time()) {
                 // Refresh Token yoksa veya süresi dolmuşsa, yeni bir refresh token oluştur
                 $refreshToken = bin2hex(random_bytes(16));
-                $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
+                $expiresAt = date('Y-m-d H:i:s', strtotime($rememberTm));
                 $deviceUUID = $data['device_uuid'] ?? null;
         
                 // Refresh token'ı güncelle veya ekle
