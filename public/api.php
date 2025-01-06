@@ -9,6 +9,7 @@ require_once __DIR__ . '/../lib/handlers/DatabaseHandler.php';
 require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/../lib/handlers/UserHandler.php';
 require_once __DIR__ . '/../lib/handlers/PasswordResetHandler.php';
+require_once __DIR__ . '/../lib/handlers/CRUDHandlers.php';
 
 // JSON yanıt fonksiyonu
 function jsonResponse($success, $message, $data = null, $errors = null) {
@@ -22,7 +23,7 @@ function jsonResponse($success, $message, $data = null, $errors = null) {
 }
 
 try {
-    $logger = getLogger(); // Merkezi logger
+    $loggerInfo = getLoggerInfo(); // Merkezi logger
 
     // Gelen isteği ve endpoint'i al
     $data = json_decode(file_get_contents('php://input'), true);
@@ -84,28 +85,49 @@ try {
             }
             break;
 
-            case 'get_users_with_roles':
+        case 'get_users_with_roles':
+            $userHandler = new UserHandler();
+            $response = $userHandler->getUsersWithRoles();
+            jsonResponse(true, 'Users retrieved successfully.', $response);
+            break;
+
+        case 'refresh_token':
+            try {
+                $data = json_decode(file_get_contents('php://input'), true);
+                $refreshToken = $data['refresh_token'] ?? null;
+        
+                $logger->info('Refresh token request received.', ['refresh_token' => $refreshToken]);
+        
+                if (!$refreshToken) {
+                    jsonResponse(false, 'Refresh token is required.');
+                }
+        
                 $userHandler = new UserHandler();
-                $response = $userHandler->getUsersWithRoles();
-                jsonResponse(true, 'Users retrieved successfully.', $response);
-                break;
-                case 'refresh_token':
-                    try {
-                        $refreshToken = $_POST['refresh_token'] ?? null;
-                
-                        if (!$refreshToken) {
-                            jsonResponse(false, 'Refresh token is required.');
-                        }
-                
-                        $userHandler = new UserHandler();
-                        $response = $userHandler->refreshAccessToken($refreshToken);
-                        jsonResponse($response['success'], $response['message'], $response['data']);
-                    } catch (Exception $e) {
-                        $logger->error('Error during token refresh.', ['exception' => $e]);
-                        jsonResponse(false, 'An error occurred while refreshing token.', null, ['error' => $e->getMessage()]);
-                    }
-                    break;
-                
+                $response = $userHandler->refreshAccessToken($refreshToken);
+                jsonResponse($response['success'], $response['message'], $response['data']);
+            } catch (Exception $e) {
+                $logger->error('Error during token refresh.', ['exception' => $e]);
+                jsonResponse(false, 'An error occurred while refreshing token.', null, ['error' => $e->getMessage()]);
+            }
+            break;
+        
+        case 'logout':
+            try {
+                $data = json_decode(file_get_contents('php://input'), true);
+                $refreshToken = $data['refresh_token'] ?? null;
+        
+                if (!$refreshToken) {
+                    jsonResponse(false, 'Refresh token is required.');
+                }
+        
+                $userHandler = new UserHandler();
+                $response = $userHandler->logout($refreshToken);
+                jsonResponse($response['success'], $response['message']);
+            } catch (Exception $e) {
+                $logger->error('Error during logout.', ['exception' => $e]);
+                jsonResponse(false, 'An error occurred while logging out.');
+            }
+            break;
             
 
         default:

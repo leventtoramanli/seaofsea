@@ -2,23 +2,32 @@
 require_once __DIR__ . '/MailHandler.php';
 require_once __DIR__ . '/CRUDHandlers.php';
 
+use Firebase\JWT\Key;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Firebase\JWT\JWT;
 
-class UserHandler {
+class UserHandler
+{
     private $mailHandler;
     private $crud;
     private static $logger;
 
-    public function __construct() {
+    private static $loggerInfo;
+
+    public function __construct()
+    {
         $this->mailHandler = new MailHandler();
         $this->crud = new CRUDHandler();
         if (!self::$logger) {
             self::$logger = getLogger(); // Merkezi logger
         }
+        if (!self::$loggerInfo) {
+            self::$loggerInfo = getLoggerInfo(); // Merkezi logger
+        }
     }
 
-    private function checkDatabase() {
+    private function checkDatabase()
+    {
         $checked = false;
         try {
             $checked = DatabaseHandler::testConnection();
@@ -29,7 +38,8 @@ class UserHandler {
         return $checked;
     }
 
-    public function validateAndRegisterUser($data) {
+    public function validateAndRegisterUser($data)
+    {
         self::$logger->info('Validation Input Data', ['data' => $data]);
         $errors = $this->validateUserData($data);
         if (!empty($errors)) {
@@ -61,40 +71,46 @@ class UserHandler {
                 'token' => $verificationToken,
                 'expires_at' => date('Y-m-d H:i:s', strtotime('+1 hour'))
             ]);
-        
+
             if (!$this->sendVerificationEmail($data['email'], $verificationToken)) {
                 throw new Exception('Verification email could not be sent.');
             }
-        
+
             return ['success' => true, 'message' => 'User registered successfully. Please check your email for verification.'];
         } catch (Exception $e) {
             self::$logger->error('Registration error.', ['exception' => $e]);
-        
+
             if (str_contains($e->getMessage(), 'email could not be sent')) {
                 return ['success' => false, 'message' => 'Failed to send verification email.'];
             }
-        
+
             return ['success' => false, 'message' => 'An error occurred during registration.', 'error' => $e->getMessage()];
-        }        
+        }
     }
 
-    public function login($data) {
+    public function login($data)
+    {
         $errors = $this->validateLoginData($data);
         if (!empty($errors)) {
             return ['success' => false, 'message' => 'Please fill in all required fields.', 'errors' => $errors];
         }
+
         if (!$this->checkDatabase()) {
             return ['success' => false, 'message' => 'Database connection error.'];
         }
+
         try {
+            // Kullanıcıyı veritabanında ara
             $user = Capsule::table('users')->where('email', $data['email'])->first();
             if (!$user) {
                 return ['success' => false, 'message' => 'User not found.'];
             }
         } catch (Exception $e) {
-            self::$logger->error('Database query error.', ['exception' => $e]);
+            self::$logger->error('Database query error while fetching user.', ['exception' => $e]);
             return ['success' => false, 'message' => 'Database query error.'];
         }
+
+        // Şifre doğrulaması
         if (!$user || !password_verify($data['password'], $user->password)) {
             self::$logger->warning('Login failed.', [
                 'email' => $data['email'],
@@ -103,20 +119,53 @@ class UserHandler {
             return ['success' => false, 'message' => 'Invalid email or password.'];
         }
 
-        $jwt = $this->generateJWT($user);
+        // Access Token oluştur
+        $jwt = $this->generateJWT($user); // Access Token oluştur
+
+        try {
+            // Refresh Token kontrol et
+            $refreshTokenData = Capsule::table('refresh_tokens')
+                ->where('user_id', $user->id)
+                ->first();
+
+            if (!$refreshTokenData) {
+                // Refresh Token yoksa oluştur
+                $refreshToken = bin2hex(random_bytes(16));
+                $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
+
+                Capsule::table('refresh_tokens')->insert([
+                    'user_id' => $user->id,
+                    'token' => $refreshToken,
+                    'expires_at' => $expiresAt
+                ]);
+            } else {
+                // Mevcut Refresh Token'ı kullan
+                $refreshToken = $refreshTokenData->token;
+                $expiresAt = $refreshTokenData->expires_at;
+            }
+        } catch (Exception $e) {
+            self::$logger->error('Failed to handle refresh token during login.', [
+                'exception' => $e,
+                'user_id' => $user->id
+            ]);
+            return ['success' => false, 'message' => 'Failed to handle refresh token.'];
+        }
 
         return [
             'success' => true,
             'message' => $user->is_verified ? 'Login successful.' : 'Please verify your email.',
             'data' => [
-                'token' => $jwt,
+                'token' => $jwt, // Access Token
+                'refresh_token' => $refreshToken, // Refresh Token
+                'expires_at' => $expiresAt, // Süresi
                 'is_verified' => $user->is_verified,
                 'role' => (string) $user->role_id
             ]
         ];
     }
 
-    public function updateUser($userId, $data) {
+    public function updateUser($userId, $data)
+    {
         try {
             $conditions = ['id' => $userId];
             $updateResult = $this->crud->update('users', $data, $conditions);
@@ -133,26 +182,27 @@ class UserHandler {
         }
     }
 
-    public function refreshAccessToken($refreshToken) {
+    public function refreshAccessToken($refreshToken)
+    {
         try {
             $refreshTokenData = Capsule::table('refresh_tokens')->where('token', $refreshToken)->first();
-    
+
             if (!$refreshTokenData) {
                 return ['success' => false, 'message' => 'Invalid refresh token.'];
             }
-    
+
             if (strtotime($refreshTokenData->expires_at) < time()) {
                 Capsule::table('refresh_tokens')->where('id', $refreshTokenData->id)->delete();
                 return ['success' => false, 'message' => 'Refresh token has expired.'];
             }
-    
+
             $user = Capsule::table('users')->where('id', $refreshTokenData->user_id)->first();
             if (!$user) {
                 return ['success' => false, 'message' => 'User not found.'];
             }
-    
+
             $newAccessToken = $this->generateJWT($user);
-    
+
             return [
                 'success' => true,
                 'message' => 'Access token refreshed successfully.',
@@ -163,8 +213,9 @@ class UserHandler {
             return ['success' => false, 'message' => 'An error occurred while refreshing token.'];
         }
     }
-    
-    public function deleteUser($userId) {
+
+    public function deleteUser($userId)
+    {
         try {
             $conditions = ['id' => $userId];
             $deleteResult = $this->crud->delete('users', $conditions);
@@ -181,7 +232,8 @@ class UserHandler {
         }
     }
 
-    public function getUsersWithRoles() {
+    public function getUsersWithRoles()
+    {
         return $this->crud->read(
             table: 'users',
             columns: ['users.name', 'roles.name as role_name'],
@@ -192,7 +244,8 @@ class UserHandler {
         );
     }
 
-    public function sendVerificationEmail($email, $token) {
+    public function sendVerificationEmail($email, $token)
+    {
         $subject = "Email Verification";
         $verificationLink = "https://seaofsea.com/public/api/verify_email.php?token=$token";
 
@@ -205,10 +258,13 @@ class UserHandler {
         return $this->mailHandler->sendMail($email, $subject, $body);
     }
 
-    private function validateUserData($data) {
+    private function validateUserData($data)
+    {
         $errors = [];
-        if (empty($data['name'])) $errors[] = "Name is required.";
-        if (empty($data['surname'])) $errors[] = "Surname is required.";
+        if (empty($data['name']))
+            $errors[] = "Name is required.";
+        if (empty($data['surname']))
+            $errors[] = "Surname is required.";
         if (empty($data['email']) || !filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Valid email is required.";
         } else {
@@ -223,7 +279,8 @@ class UserHandler {
         return $errors;
     }
 
-    private function validateLoginData($data) {
+    private function validateLoginData($data)
+    {
         $errors = [];
         if (empty($data['email']) || !filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Valid email is required.";
@@ -234,7 +291,8 @@ class UserHandler {
         return $errors;
     }
 
-    private function generateJWT($user) {
+    private function generateJWT($user)
+    {
         $secretKey = $_ENV['JWT_SECRET'];
         $payload = [
             'iss' => 'https://seaofsea.com',
@@ -259,7 +317,52 @@ class UserHandler {
         return $token;
     }
 
-    public function validateJWT($token) {
+    public function cleanExpiredTokens() {
+        try {
+            $deletedCount = $this->crud->deleteExpiredRefreshTokens();
+            if ($deletedCount > 0) {
+                self::$logger->info('Expired refresh tokens cleaned up.', ['count' => $deletedCount]);
+            }
+        } catch (Exception $e) {
+            self::$logger->error('Error while cleaning expired refresh tokens.', ['exception' => $e]);
+        }
+    }
+    
+
+    public function logout($refreshToken, $allDevices = false) {
+        try {
+            self::$logger->info('Logout initiated.', ['refresh_token' => $refreshToken, 'all_devices' => $allDevices]);
+    
+            if ($allDevices) {
+                // Tüm cihazlardan çıkış
+                $refreshTokenData = Capsule::table('refresh_tokens')->where('token', $refreshToken)->first();
+    
+                if ($refreshTokenData) {
+                    Capsule::table('refresh_tokens')->where('user_id', $refreshTokenData->user_id)->delete();
+                    self::$logger->info('All refresh tokens for the user deleted.', ['user_id' => $refreshTokenData->user_id]);
+                } else {
+                    // Token bulunamazsa yine de devam et
+                    self::$logger->warning('Refresh token not found for all devices logout.', ['refresh_token' => $refreshToken]);
+                }
+            } else {
+                // Sadece mevcut cihazdan çıkış
+                $deleted = Capsule::table('refresh_tokens')->where('token', $refreshToken)->delete();
+    
+                if (!$deleted) {
+                    // Token bulunamazsa uyarı logu, ama işleme devam
+                    self::$logger->warning('Refresh token not found for single device logout.', ['refresh_token' => $refreshToken]);
+                }
+            }
+    
+            return ['success' => true, 'message' => 'Logged out successfully.'];
+        } catch (Exception $e) {
+            self::$logger->error('Error during logout.', ['exception' => $e, 'refresh_token' => $refreshToken]);
+            return ['success' => false, 'message' => 'An error occurred while logging out.'];
+        }
+    }   
+
+    public function validateJWT($token)
+    {
         try {
             $algorithms = ['HS256'];
             $decoded = JWT::decode($token, $_ENV['JWT_SECRET'], $algorithms);

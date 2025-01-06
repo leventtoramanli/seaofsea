@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/lib/handlers/DatabaseHandler.php';
+require_once __DIR__ . '/lib/handlers/UserHandler.php';
 
 use Dotenv\Dotenv;
 use Monolog\Logger;
@@ -14,7 +15,10 @@ $dotenv->load();
 // Logger oluştur (merkezi kullanım için)
 $logger = new Logger('application');
 $logger->pushHandler(new StreamHandler(__DIR__ . '/logs/application.log', Logger::ERROR));
-/*
+
+$loggerInfo = new Logger('application_info');
+$loggerInfo->pushHandler(new StreamHandler(__DIR__ . '/logs/appInfo.log', Logger::INFO));
+
 // Merkezi hata yönetimi
 set_exception_handler(function ($e) use ($logger) {
     $logger->error('Unhandled Exception', ['exception' => $e]);
@@ -27,11 +31,14 @@ set_error_handler(function ($severity, $message, $file, $line) use ($logger) {
     http_response_code(500);
     echo "An error occurred. Please try again later.";
 });
-*/
+
 // Merkezi Logger erişimi için fonksiyon (isteğe bağlı)
 function getLogger(): Logger {
     global $logger;
     return $logger;
 }
-
+function getLoggerInfo(): Logger {
+    global $loggerInfo;
+    return $loggerInfo;
+}
 new DatabaseHandler();

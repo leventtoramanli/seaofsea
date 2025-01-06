@@ -129,4 +129,16 @@ class CRUDHandler {
             $query->where($key, $value);
         }
     }
+    public function deleteExpiredRefreshTokens() {
+        try {
+            $deletedCount = Capsule::table('refresh_tokens')
+                ->where('expires_at', '<', date('Y-m-d H:i:s'))
+                ->delete();
+    
+            return $deletedCount; // Silinen kayıtların sayısını döndür
+        } catch (Exception $e) {
+            self::$logger->error('Failed to delete expired refresh tokens.', ['exception' => $e]);
+            throw $e;
+        }
+    }    
 }
