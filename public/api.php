@@ -1,5 +1,7 @@
 <?php
 
+use Carbon\Traits\ToStringFormat;
+
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
@@ -112,23 +114,35 @@ try {
             break;
         
         case 'logout':
+            $data = json_decode(file_get_contents('php://input'), true);
+
             try {
-                $data = json_decode(file_get_contents('php://input'), true);
+                
                 $refreshToken = $data['refresh_token'] ?? null;
+                $deviceUUID = $data['device_uuid'] ?? null;
+                $allDevices = $data['all_devices'] ?? false;
         
+                $logger->info('Logout request received.', ['refresh_token' => $refreshToken, 'device_uuid' => $deviceUUID, 'all_devices' => $allDevices]);
                 if (!$refreshToken) {
                     jsonResponse(false, 'Refresh token is required.');
                 }
         
                 $userHandler = new UserHandler();
-                $response = $userHandler->logout($refreshToken);
+                $response = $userHandler->logout($refreshToken, $deviceUUID, $allDevices);
                 jsonResponse($response['success'], $response['message']);
             } catch (Exception $e) {
                 $logger->error('Error during logout.', ['exception' => $e]);
                 jsonResponse(false, 'An error occurred while logging out.');
             }
             break;
-            
+        case 'check_token':
+            $userHandler = new UserHandler();
+            $response = $userHandler->validateToken($data);
+            $data = $response['data'] ?? [];
+            $message = $response['message'] ?? null;
+        
+            jsonResponse($response['success'], $message, $data);
+            break;
 
         default:
             jsonResponse(false, 'Invalid endpoint.');

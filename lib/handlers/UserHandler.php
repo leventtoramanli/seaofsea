@@ -126,18 +126,20 @@ class UserHandler
             // Refresh Token kontrol et
             $refreshTokenData = Capsule::table('refresh_tokens')
                 ->where('user_id', $user->id)
+                ->where('device_info', $data['device_uuid'] ?? null) // Device UUID eşleşmesi
                 ->first();
-
-            if (!$refreshTokenData) {
-                // Refresh Token yoksa oluştur
+        
+            if (!$refreshTokenData || strtotime($refreshTokenData->expires_at) < time()) {
+                // Refresh Token yoksa veya süresi dolmuşsa, yeni bir refresh token oluştur
                 $refreshToken = bin2hex(random_bytes(16));
                 $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-
-                Capsule::table('refresh_tokens')->insert([
-                    'user_id' => $user->id,
-                    'token' => $refreshToken,
-                    'expires_at' => $expiresAt
-                ]);
+                $deviceUUID = $data['device_uuid'] ?? null;
+        
+                // Refresh token'ı güncelle veya ekle
+                Capsule::table('refresh_tokens')->updateOrInsert(
+                    ['user_id' => $user->id, 'device_info' => $deviceUUID],
+                    ['token' => $refreshToken, 'expires_at' => $expiresAt]
+                );
             } else {
                 // Mevcut Refresh Token'ı kullan
                 $refreshToken = $refreshTokenData->token;
@@ -146,7 +148,7 @@ class UserHandler
         } catch (Exception $e) {
             self::$logger->error('Failed to handle refresh token during login.', [
                 'exception' => $e,
-                'user_id' => $user->id
+                'user_id' => $user->id,
             ]);
             return ['success' => false, 'message' => 'Failed to handle refresh token.'];
         }
@@ -329,9 +331,7 @@ class UserHandler
     }
     
 
-    public function logout($refreshToken, $allDevices = false) {
-        try {
-            self::$logger->info('Logout initiated.', ['refresh_token' => $refreshToken, 'all_devices' => $allDevices]);
+    public function logout($refreshToken, $deviceUUID = null, $allDevices = false) {
     
             if ($allDevices) {
                 // Tüm cihazlardan çıkış
@@ -346,7 +346,10 @@ class UserHandler
                 }
             } else {
                 // Sadece mevcut cihazdan çıkış
-                $deleted = Capsule::table('refresh_tokens')->where('token', $refreshToken)->delete();
+                $deleted = Capsule::table('refresh_tokens')
+                ->where('token', $refreshToken)
+                ->where('device_info', $deviceUUID)
+                ->delete();
     
                 if (!$deleted) {
                     // Token bulunamazsa uyarı logu, ama işleme devam
@@ -355,17 +358,36 @@ class UserHandler
             }
     
             return ['success' => true, 'message' => 'Logged out successfully.'];
-        } catch (Exception $e) {
-            self::$logger->error('Error during logout.', ['exception' => $e, 'refresh_token' => $refreshToken]);
-            return ['success' => false, 'message' => 'An error occurred while logging out.'];
-        }
     }   
+    public function validateToken($data)
+    {
+        $refreshToken = $data['refresh_token'] ?? null;
+
+        if (!$refreshToken) {
+            return ['success' => false, 'message' => 'Refresh token is required.'];
+        }
+
+        try {
+            // Refresh token'ı kontrol et
+            $tokenData = Capsule::table('refresh_tokens')
+                ->where('token', $refreshToken)
+                ->first();
+
+            if ($tokenData && strtotime($tokenData->expires_at) > time()) {
+                return ['success' => true, 'message' => 'Token is valid.'];
+            } else {
+                return ['success' => false, 'message' => 'Token is invalid or expired.'];
+            }
+        } catch (Exception $e) {
+            self::$logger->error('Token validation error', ['exception' => $e]);
+            return ['success' => false, 'message' => 'An error occurred while validating token.'];
+        }
+    }
 
     public function validateJWT($token)
     {
         try {
-            $algorithms = ['HS256'];
-            $decoded = JWT::decode($token, $_ENV['JWT_SECRET'], $algorithms);
+            $decoded = JWT::decode($token, new Key($_ENV['JWT_SECRET'], 'HS256'));
             self::$logger->info('JWT validated successfully.', [
                 'user_id' => $decoded->data->id,
                 'email' => $decoded->data->email

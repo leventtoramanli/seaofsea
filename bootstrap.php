@@ -42,3 +42,5 @@ function getLoggerInfo(): Logger {
     return $loggerInfo;
 }
 new DatabaseHandler();
+$userHandler = new UserHandler();
+$userHandler->cleanExpiredTokens();
