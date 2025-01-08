@@ -50,3 +50,13 @@ button {
 button:hover {
     background: #0056b3;
 }
+.email-display {
+    font-size: 14px;
+    color: #555;
+    margin-bottom: 15px;
+    background: #f1f1f1;
+    padding: 10px;
+    border-radius: 5px;
+    display: inline-block;
+    text-align: left;
+}

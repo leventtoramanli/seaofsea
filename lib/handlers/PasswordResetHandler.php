@@ -28,7 +28,10 @@ class PasswordResetHandler {
             'expires_at' => $expiresAt
         ]);
 
-        return $token;
+        $resetLink = "https://seaofsea.com/public/api/reset_password.php?token=$token";
+        $sendToClient =$this->sendResetEmail($email, $resetLink);
+
+        return $sendToClient;
     }
 
     public function sendResetEmail($email, $resetLink) {
@@ -37,6 +40,9 @@ class PasswordResetHandler {
             <h1>Password Reset Request</h1>
             <p>Click the link below to reset your password:</p>
             <a href=\"$resetLink\">Reset Password</a>
+            <p>This link will expire in 1 hour.</p>
+            <p><b>Note:</b> If you did not request a password reset, please ignore this email.</p>
+            <p>Best regards,<br>The Sea of Sea Team</p>
         ";
         return $this->mailHandler->sendMail($email, $subject, $body);
     }

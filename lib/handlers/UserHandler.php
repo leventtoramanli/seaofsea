@@ -121,7 +121,7 @@ class UserHandler
 
         // Access Token oluştur
         $jwt = $this->generateJWT($user); // Access Token oluştur
-        $rememberMe = $data['remember_me'] ?? false;
+        $rememberMe = $data['rememberMe'] ?? false;
         $rememberTm = $rememberMe ? '+30 days' : '+1 hour';
 
         try {

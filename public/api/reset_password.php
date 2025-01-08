@@ -1,7 +1,13 @@
 <?php
+ini_set('display_errors', 'On');
+error_reporting(E_ALL);
 
-require_once __DIR__ . '/../bootstrap.php';
-require_once __DIR__ . '/../lib/handlers/PasswordResetHandler.php';
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+
+require_once __DIR__ . '/../../bootstrap.php';
+require_once __DIR__ . '/../../lib/handlers/PasswordResetHandler.php';
 
 $resetHandler = new PasswordResetHandler();
 
@@ -47,17 +53,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Password Reset</title>
+    <link rel="stylesheet" href="mail.css">
 </head>
 <body>
-    <h1>Password Reset</h1>
-    <p><?= htmlspecialchars($message) ?></p>
-
-    <?php if ($showForm): ?>
-        <form method="POST">
-            <input type="password" name="new_password" placeholder="New Password" required>
-            <input type="password" name="confirm_password" placeholder="Confirm Password" required>
-            <button type="submit">Reset Password</button>
-        </form>
-    <?php endif; ?>
+    <div class="container">
+        <h1>Password Reset</h1>
+        <p class="message <?= $showForm ? 'info' : (stripos($message, 'success') !== false ? 'success' : 'error') ?>">
+            <?= htmlspecialchars($message) ?>
+        </p>
+        <p class="email-display">Your email: <?php echo htmlspecialchars($email); ?></p>
+        <?php if ($showForm): ?>
+            <form method="POST">
+                <input type="password" name="new_password" placeholder="New Password" required>
+                <input type="password" name="confirm_password" placeholder="Confirm Password" required>
+                <button type="submit">Reset Password</button>
+            </form>
+        <?php endif; ?>
+    </div>
 </body>
 </html>
