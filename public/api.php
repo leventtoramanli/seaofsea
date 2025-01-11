@@ -143,6 +143,17 @@ try {
         
             jsonResponse($response['success'], $message, $data);
             break;
+        
+        case 'roles':
+            $userHandler = new UserHandler();
+            $roles = $userHandler->getAllRoles();
+            if ($roles) {
+                jsonResponse(true, 'Roles retrieved successfully.', $roles);
+            } else {
+                jsonResponse(false, 'No roles found.');
+            }
+            break;
+            
 
         default:
             jsonResponse(false, 'Invalid endpoint.');

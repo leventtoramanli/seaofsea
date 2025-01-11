@@ -1,3 +1,4 @@
+/* Genel ayarlar */
 body {
     font-family: Arial, sans-serif;
     background: #f9f9f9;
@@ -7,6 +8,7 @@ body {
     height: 100vh;
     margin: 0;
 }
+
 .container {
     background: white;
     padding: 20px;
@@ -16,47 +18,64 @@ body {
     max-width: 400px;
     width: 100%;
 }
+
+/* Mesajlar */
 .message {
     font-size: 16px;
     margin-bottom: 20px;
 }
+
 .message.success {
     color: #28a745;
 }
+
 .message.error {
     color: #dc3545;
 }
+
 .message.info {
     color: #007bff;
 }
-form {
-    margin-top: 20px;
+
+/* Input alanları */
+.input-group {
+    margin-bottom: 15px;
+    text-align: left;
 }
-input[type="email"] {
-    width: 100%;
-    padding: 10px;
-    margin-bottom: 10px;
+
+.input-group input {
+    width: 90%;
+    padding: 12px 15px;
     border: 1px solid #ddd;
     border-radius: 5px;
+    font-size: 14px;
+    transition: border-color 0.3s ease;
 }
+
+.input-group input:focus {
+    border-color: #007bff;
+    outline: none;
+}
+
+.input-group .error-message {
+    color: #dc3545;
+    font-size: 12px;
+    margin-top: 5px;
+    display: none;
+}
+
+/* Butonlar */
 button {
-    padding: 10px 20px;
+    padding: 12px 20px;
     background: #007bff;
     color: white;
     border: none;
     border-radius: 5px;
     cursor: pointer;
+    font-size: 14px;
+    width: 100%;
 }
+
 button:hover {
     background: #0056b3;
-}
-.email-display {
-    font-size: 14px;
-    color: #555;
-    margin-bottom: 15px;
-    background: #f1f1f1;
-    padding: 10px;
-    border-radius: 5px;
-    display: inline-block;
-    text-align: left;
 }

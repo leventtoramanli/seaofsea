@@ -38,6 +38,10 @@ class UserHandler
         return $checked;
     }
 
+    public function getAllRoles() {
+        return $this->crud->read('roles', fetchAll: true);
+    }    
+
     public function validateAndRegisterUser($data)
     {
         self::$logger->info('Validation Input Data', ['data' => $data]);
