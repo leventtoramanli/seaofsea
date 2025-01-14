@@ -12,6 +12,7 @@ require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/../lib/handlers/UserHandler.php';
 require_once __DIR__ . '/../lib/handlers/PasswordResetHandler.php';
 require_once __DIR__ . '/../lib/handlers/CRUDHandlers.php';
+require_once __DIR__ . '/../lib/handlers/ImageUploadHandler.php';
 
 // JSON yanıt fonksiyonu
 function jsonResponse($success, $message, $data = null, $errors = null) {
@@ -153,8 +154,41 @@ try {
                 jsonResponse(false, 'No roles found.');
             }
             break;
+        
+        case 'upload_cover_image':
+            $userId = $data['user_id'] ?? null;
+            $file = $_FILES['cover_image'] ?? null;
+            $meta = $data['meta'] ?? null;
             
+        
+            if (!$userId || !$file || !$meta) {
+                jsonResponse(false, 'User ID, cover image file, and meta data are required.');
+            }
 
+            $expectedMeta = hash('sha256', $userId . $file['name']);
+            if ($meta !== $expectedMeta) {
+                jsonResponse(false, 'Invalid meta data.');
+            }
+
+            try {
+                $uploadHandler = new App\Handlers\ImageUploadHandler('images/user/covers');
+                $fileName = $uploadHandler->uploadImage($file, $userId, $meta);
+
+                $crudHandler = new CRUDHandler();
+                $updateResult = $crudHandler->update('users', ['cover_image' => $fileName], ['id' => $userId]);
+        
+                if (!$updateResult) {
+                    throw new Exception('Failed to update user record.');
+                }
+        
+                jsonResponse(true, 'Cover image uploaded successfully.', [
+                    'file_path' => $uploadHandler->getUploadPath() . '/' . $fileName
+                ]);
+            } catch (Exception $e) {
+                jsonResponse(false, $e->getMessage());
+            }
+            break;
+            
         default:
             jsonResponse(false, 'Invalid endpoint.');
     }
