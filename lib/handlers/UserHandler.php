@@ -311,7 +311,9 @@ class UserHandler
                 'id' => $user->id,
                 'email' => $user->email,
                 'name' => $user->name,
+                'surname' => $user->surname,
                 'role' => $user->role_id,
+                'cover_image' => $user->cover_image,
                 'is_verified' => $user->is_verified
             ]
         ];

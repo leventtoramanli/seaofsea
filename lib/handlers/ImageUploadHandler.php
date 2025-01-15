@@ -7,9 +7,13 @@ use Exception;
 class ImageUploadHandler
 {
     private $allowedFormats = ['jpg', 'jpeg', 'png', 'webp'];
-    private $maxFileSize = 2 * 1024 * 1024; // 2 MB
+    private $maxFileSize = 5 * 1024 * 1024; // 2 MB
     private $uploadDir;
     private $deleteOldImage = false;
+
+    private static $logger;
+
+
 
     private function validateMetaData($file, $expectedMeta)
     {
@@ -23,8 +27,26 @@ class ImageUploadHandler
         }
     }
 
+    private function logInfo(string $message, array $data = [])
+    {
+        self::$logger->info($message, $data);
+    }
+
+    private function logError(string $message, Exception $exception = null)
+    {
+        $context = [];
+        if ($exception) {
+            $context['exception'] = [
+                'message' => $exception->getMessage(),
+                'trace' => $exception->getTraceAsString(),
+            ];
+        }
+        self::$logger->error($message, $context);
+    }
+
     public function __construct($uploadDir)
     {
+        self::$logger = self::$logger ?? getLogger();
         $this->uploadDir = __DIR__ . '/../../' . $uploadDir;
         if (!is_dir($this->uploadDir)) {
             mkdir($this->uploadDir, 0777, true);
@@ -47,30 +69,70 @@ class ImageUploadHandler
         }
 
         if ($fileSize > $this->maxFileSize) {
-            throw new Exception("File size exceeds the maximum limit of 2 MB.");
+            throw new Exception("File size exceeds the maximum limit of 5 MB.");
         }
     }
 
-    public function uploadImage($file, $userId, $expectedMeta, $oldImage = null)
+    public function uploadImage($file, $userId, $meta = [], $oldImage = false)
     {
-        $this->validateImage($file);
-        $this->validateMetaData($file, $expectedMeta);
+        try{
+            $this->logInfo('Starting image upload.', ['userId' => $userId]);
+            $this->validateImage($file);
 
-        $fileName = $this->generateFileName($file, $userId);
-        $filePath = $this->uploadDir . DIRECTORY_SEPARATOR . $fileName;
+            $fileName = $this->generateFileName($file, $userId);
+            $filePath = $this->uploadDir . DIRECTORY_SEPARATOR . $fileName;
 
-        if ($this->deleteOldImage && $oldImage && file_exists($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage)){
-            if (!unlink($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage)) {
-                throw new Exception('Failed to delete the old image.');
+            // Eski dosyayı sil
+            if ($oldImage && file_exists($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage)) {
+                unlink($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage);
+                $this->logInfo('Old image deleted.', ['file' => $oldImage]);
+            }else{
+                $this->logInfo('Old image not found.', ['file' => $oldImage]);
             }
-        }
+            $this->logInfo('File already exists search.', ['file' => $oldImage]);
+            // Dosya zaten var mı kontrol et
+            if (file_exists($filePath)) {
+                $this->logInfo('File already exists search.', ['file' => $oldImage]);
+                throw new Exception("A file with the same name already exists.");
+            }
 
-        if (!move_uploaded_file($file['tmp_name'], $filePath)) {
-            throw new Exception('Failed to upload the file.');
-        }
+            if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+                throw new Exception("Failed to upload the file.");
+            }
 
-        return $fileName;
+            // Meta veriyi EXIF olarak dosyaya yaz
+            $this->writeExifData($filePath, $meta);
+            $this->logInfo('Image uploaded successfully.', ['file' => $fileName]);
+
+
+            return $fileName;
+        }
+        catch (Exception $e) {
+            $this->logError('Image upload failed.', $e);
+            throw $e;
+        }
     }
+
+private function writeExifData($filePath, $meta)
+{
+    // EXIF yazma işlemi
+    $exifData = [
+        'Publisher' => $meta['Publisher'] ?? '',
+        'Description' => $meta['Description'] ?? '',
+        'Title' => $meta['Title'] ?? '',
+        'Author' => $meta['Author'] ?? '',
+        'UserId' => $meta['UserId'] ?? '',
+    ];
+
+    // EXIF yazmak için bir kütüphane veya manuel işleme eklenebilir.
+    foreach ($exifData as $key => $value) {
+        if (!empty($value)) {
+            // EXIF yazma işlemi (örneğin exiftool ile)
+            // shell_exec("exiftool -$key='$value' $filePath");
+        }
+    }
+}
+
 
     private function generateFileName($file, $userId)
     {

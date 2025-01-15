@@ -157,22 +157,17 @@ try {
         
         case 'upload_cover_image':
             $userId = $data['user_id'] ?? null;
-            $file = $_FILES['cover_image'] ?? null;
+            $file = $_FILES['file'] ?? null;
             $meta = $data['meta'] ?? null;
             
         
-            if (!$userId || !$file || !$meta) {
-                jsonResponse(false, 'User ID, cover image file, and meta data are required.');
-            }
-
-            $expectedMeta = hash('sha256', $userId . $file['name']);
-            if ($meta !== $expectedMeta) {
-                jsonResponse(false, 'Invalid meta data.');
+            if (!$userId || !$file) {
+                jsonResponse(false, 'User ID, cover image file are required.');
             }
 
             try {
                 $uploadHandler = new App\Handlers\ImageUploadHandler('images/user/covers');
-                $fileName = $uploadHandler->uploadImage($file, $userId, $meta);
+                $fileName = $uploadHandler->uploadImage($file, $userId, $meta, $data['old_image'] ?? null);
 
                 $crudHandler = new CRUDHandler();
                 $updateResult = $crudHandler->update('users', ['cover_image' => $fileName], ['id' => $userId]);
