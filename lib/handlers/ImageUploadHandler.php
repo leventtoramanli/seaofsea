@@ -7,7 +7,7 @@ use Exception;
 class ImageUploadHandler
 {
     private $allowedFormats = ['jpg', 'jpeg', 'png', 'webp'];
-    private $maxFileSize = 5 * 1024 * 1024; // 2 MB
+    private $maxFileSize = 15 * 1024 * 1024; // 2 MB
     private $uploadDir;
     private $deleteOldImage = false;
 
@@ -84,17 +84,14 @@ class ImageUploadHandler
 
             // Eski dosyayı sil
             if ($oldImage && file_exists($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage)) {
-                unlink($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage);
+                if(file_exists($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage)){
+                    unlink($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage);
+                }
                 $this->logInfo('Old image deleted.', ['file' => $oldImage]);
             }else{
                 $this->logInfo('Old image not found.', ['file' => $oldImage]);
             }
             $this->logInfo('File already exists search.', ['file' => $oldImage]);
-            // Dosya zaten var mı kontrol et
-            if (file_exists($filePath)) {
-                $this->logInfo('File already exists search.', ['file' => $oldImage]);
-                throw new Exception("A file with the same name already exists.");
-            }
 
             if (!move_uploaded_file($file['tmp_name'], $filePath)) {
                 throw new Exception("Failed to upload the file.");
