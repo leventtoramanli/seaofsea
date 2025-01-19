@@ -7,55 +7,75 @@ use Exception;
 class ImageUploadHandler
 {
     private $allowedFormats = ['jpg', 'jpeg', 'png', 'webp'];
-    private $maxFileSize = 15 * 1024 * 1024; // 2 MB
+    private $maxFileSize = 15 * 1024 * 1024; // Maksimum dosya boyutu
     private $uploadDir;
-    private $deleteOldImage = false;
-
     private static $logger;
-
-
-
-    private function validateMetaData($file, $expectedMeta)
-    {
-        $metaData = exif_read_data($file['tmp_name']);
-        if (!$metaData || !isset($metaData['UserComment'])) {
-            throw new Exception('Image files are only accepted through the SeaOfSea system.');
-        }
-
-        if ($metaData['UserComment'] !== $expectedMeta) {
-            throw new Exception('Meta data mismatch.');
-        }
-    }
-
-    private function logInfo(string $message, array $data = [])
-    {
-        self::$logger->info($message, $data);
-    }
-
-    private function logError(string $message, Exception $exception = null)
-    {
-        $context = [];
-        if ($exception) {
-            $context['exception'] = [
-                'message' => $exception->getMessage(),
-                'trace' => $exception->getTraceAsString(),
-            ];
-        }
-        self::$logger->error($message, $context);
-    }
 
     public function __construct($uploadDir)
     {
         self::$logger = self::$logger ?? getLogger();
         $this->uploadDir = __DIR__ . '/../../' . $uploadDir;
+
         if (!is_dir($this->uploadDir)) {
             mkdir($this->uploadDir, 0777, true);
             chmod($this->uploadDir, 0755);
+        }
+    }
+
+    public function handleUpload($file, $imageBase64, $userId, $meta = [], $maxSize = 1920): string
+    {
+        if (!$userId) {
+            throw new Exception('User ID is required.');
+        }
+
+        // 1. Yeni dosyayı yükle
+        if ($file) {
+            $fileName = $this->uploadImage($file, $userId, $meta);
+        } elseif ($imageBase64) {
+            $fileName = $this->uploadBase64Image($imageBase64, $userId, $meta);
         } else {
-            $currentPermissions = substr(sprintf('%o', fileperms($this->uploadDir)), -4);
-            if ($currentPermissions !== '0755') {
-                chmod($this->uploadDir, 0755);
+            throw new Exception('No file or Base64 data provided.');
+        }
+
+        // 2. Eski dosyayı sil
+        $this->deleteOldImage($userId);
+
+        // 3. Yeni dosya çözünürlük ayarı
+        $this->resizeImage($this->uploadDir . DIRECTORY_SEPARATOR . $fileName, $maxSize);
+
+        return $fileName;
+    }
+    private function deleteOldImage($userId): void
+    {
+        if (empty($userId)) {
+            throw new Exception('User ID is invalid.');
+        }
+
+        $crudHandler = new \CRUDHandler();
+        $checkOldImage = $crudHandler->read('users', ['id' => $userId]);
+
+        if (empty($checkOldImage)) {
+            self::$logger->warning('No old image found for user.', ['userId' => $userId]);
+            return;
+        }
+        $checkOldImage = json_decode(json_encode($checkOldImage), true);
+        $oldImage = $checkOldImage[0]['cover_image'] ?? null;
+
+        if (!$oldImage) {
+            self::$logger->warning('Old image is null.', ['userId' => $userId]);
+            return;
+        }
+
+        $filePath = $this->uploadDir . DIRECTORY_SEPARATOR . $oldImage;
+
+        if (file_exists($filePath)) {
+            if (!unlink($filePath)) {
+                self::$logger->error('Failed to delete file.', ['filePath' => $filePath]);
+            } else {
+                self::$logger->info('Old image deleted.', ['userId' => $userId, 'file' => $oldImage]);
             }
+        } else {
+            self::$logger->info('Old image file not found.', ['userId' => $userId, 'file' => $oldImage]);
         }
     }
 
@@ -69,76 +89,101 @@ class ImageUploadHandler
         }
 
         if ($fileSize > $this->maxFileSize) {
-            throw new Exception("File size exceeds the maximum limit of 5 MB.");
+            throw new Exception("File size exceeds the maximum limit of 15 MB.");
         }
     }
 
-    public function uploadImage($file, $userId, $meta = [], $oldImage = false)
+    public function uploadImage($file, $userId, $meta = []): string
     {
-        try{
-            $this->logInfo('Starting image upload.', ['userId' => $userId]);
-            $this->validateImage($file);
+        $this->validateImage($file);
+        $fileName = $this->generateFileName($file, $userId);
+        $filePath = $this->uploadDir . DIRECTORY_SEPARATOR . $fileName;
 
-            $fileName = $this->generateFileName($file, $userId);
-            $filePath = $this->uploadDir . DIRECTORY_SEPARATOR . $fileName;
-
-            // Eski dosyayı sil
-            if ($oldImage && file_exists($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage)) {
-                if(file_exists($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage)){
-                    unlink($this->uploadDir . DIRECTORY_SEPARATOR . $oldImage);
-                }
-                $this->logInfo('Old image deleted.', ['file' => $oldImage]);
-            }else{
-                $this->logInfo('Old image not found.', ['file' => $oldImage]);
-            }
-            $this->logInfo('File already exists search.', ['file' => $oldImage]);
-
-            if (!move_uploaded_file($file['tmp_name'], $filePath)) {
-                throw new Exception("Failed to upload the file.");
-            }
-
-            // Meta veriyi EXIF olarak dosyaya yaz
-            $this->writeExifData($filePath, $meta);
-            $this->logInfo('Image uploaded successfully.', ['file' => $fileName]);
-
-
-            return $fileName;
+        if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+            throw new Exception("Failed to upload the file.");
         }
-        catch (Exception $e) {
-            $this->logError('Image upload failed.', $e);
-            throw $e;
-        }
+
+        $this->writeExifData($filePath, $meta);
+        return $fileName;
     }
 
-private function writeExifData($filePath, $meta)
-{
-    // EXIF yazma işlemi
-    $exifData = [
-        'Publisher' => $meta['Publisher'] ?? '',
-        'Description' => $meta['Description'] ?? '',
-        'Title' => $meta['Title'] ?? '',
-        'Author' => $meta['Author'] ?? '',
-        'UserId' => $meta['UserId'] ?? '',
-    ];
-
-    // EXIF yazmak için bir kütüphane veya manuel işleme eklenebilir.
-    foreach ($exifData as $key => $value) {
-        if (!empty($value)) {
-            // EXIF yazma işlemi (örneğin exiftool ile)
-            // shell_exec("exiftool -$key='$value' $filePath");
-        }
-    }
-}
-
-
-    private function generateFileName($file, $userId)
+    public function uploadBase64Image($base64Image, $userId, $meta = []): string
     {
-        $fileExtension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        return $userId . '_' . time() . '.' . $fileExtension;
+        $imageData = base64_decode($base64Image);
+        if ($imageData === false) {
+            throw new Exception("Invalid base64 image data.");
+        }
+
+        $fileName = $this->generateFileNameFromBase64($userId);
+        $filePath = $this->uploadDir . DIRECTORY_SEPARATOR . $fileName;
+
+        if (file_put_contents($filePath, $imageData) === false) {
+            throw new Exception("Failed to save base64 image.");
+        }
+
+        $this->writeExifData($filePath, $meta);
+        return $fileName;
     }
 
-    public function getUploadPath()
+    public function resizeImage(string $filePath, int $maxSize): void
     {
-        return $this->uploadDir;
+        $imageInfo = getimagesize($filePath);
+        [$originalWidth, $originalHeight, $imageType] = $imageInfo;
+
+        $aspectRatio = $originalWidth / $originalHeight;
+        if ($originalWidth > $originalHeight) {
+            $newWidth = $maxSize;
+            $newHeight = (int)($maxSize / $aspectRatio);
+        } else {
+            $newHeight = $maxSize;
+            $newWidth = (int)($maxSize * $aspectRatio);
+        }
+
+        $sourceImage = match ($imageType) {
+            IMAGETYPE_JPEG => imagecreatefromjpeg($filePath),
+            IMAGETYPE_PNG => imagecreatefrompng($filePath),
+            IMAGETYPE_GIF => imagecreatefromgif($filePath),
+            default => throw new Exception('Unsupported image type.'),
+        };
+
+        $resizedImage = imagecreatetruecolor($newWidth, $newHeight);
+
+        if ($imageType === IMAGETYPE_PNG || $imageType === IMAGETYPE_GIF) {
+            imagealphablending($resizedImage, false);
+            imagesavealpha($resizedImage, true);
+        }
+
+        imagecopyresampled(
+            $resizedImage,
+            $sourceImage,
+            0,
+            0,
+            0,
+            0,
+            $newWidth,
+            $newHeight,
+            $originalWidth,
+            $originalHeight
+        );
+
+        imagepng($resizedImage, $filePath);
+        imagedestroy($sourceImage);
+        imagedestroy($resizedImage);
+    }
+
+    private function generateFileName($file, $userId): string
+    {
+        $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
+        return $userId . '_' . time() . '.' . strtolower($extension);
+    }
+
+    private function generateFileNameFromBase64($userId): string
+    {
+        return $userId . '_' . time() . '.png';
+    }
+
+    private function writeExifData($filePath, $meta)
+    {
+        // EXIF yazma işlemi buraya eklenebilir
     }
 }

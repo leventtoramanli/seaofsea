@@ -154,41 +154,26 @@ try {
                 jsonResponse(false, 'No roles found.');
             }
             break;
-        
         case 'upload_cover_image':
             try {
                 $file = $_FILES['file'] ?? null;
-                $userId = $data['user_id'] ?? null; // JSON'dan alıyoruz
-                $fileName = $data['file_name'] ?? null;
+                $imageBase64 = $data['image_base64'] ?? null;
+                $userId = $data['user_id'] ?? $_POST['userId'] ?? null;
+                $meta = $data['meta'] ?? [];
+                $maxSize = 1920;
         
-                if ($file) {
-                    // Dosya Yükleme İşlemi
-                    $uploadHandler = new App\Handlers\ImageUploadHandler('images/user/covers');
-                    $fileName = $uploadHandler->uploadImage($file, $userId); // userId gerekmiyor
-                    jsonResponse(true, 'File uploaded successfully.', ['file_name' => $fileName]);
-                }
+                $uploadHandler = new App\Handlers\ImageUploadHandler('images/user/covers');
+                $fileName = $uploadHandler->handleUpload($file, $imageBase64, $userId, $meta, $maxSize);
         
-                if ($fileName && $userId) {
-                    // Veritabanı Güncellemesi
-                    $crudHandler = new CRUDHandler();
-                    $updateResult = $crudHandler->update('users', ['cover_image' => $fileName], ['id' => $userId]);
+                // 4. Veritabanını güncelle
+                $crudHandler = new CRUDHandler();
+                $crudHandler->update('users', ['cover_image' => $fileName], ['id' => $userId]);
         
-                    if (!$updateResult) {
-                        throw new Exception('Failed to update user record.');
-                    }
-        
-                    jsonResponse(true, 'User image updated successfully.', ['file_name' => $fileName]);
-                }
-        
-                if (!$file && !$fileName) {
-                    jsonResponse(false, 'No file or file name provided.');
-                }
+                jsonResponse(true, 'User image updated successfully.', ['file_name' => $fileName]);
             } catch (Exception $e) {
                 jsonResponse(false, 'Error occurred: ' . $e->getMessage());
             }
             break;
-                        
-            
         default:
             jsonResponse(false, 'Invalid endpoint.');
     }

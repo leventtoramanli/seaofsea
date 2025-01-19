@@ -10,7 +10,6 @@ class CRUDHandler {
             self::$logger = getLogger(); // Merkezi logger
         }
     }
-
     // CREATE
     public function create(string $table, array $data): int|bool {
         return $this->executeQuery(function () use ($table, $data) {
@@ -57,6 +56,7 @@ class CRUDHandler {
                 } elseif (method_exists($query, $method)) {
                     $query->$method(...$args);
                 } else {
+                    self::$logger->error("Unsupported method detected.", ['method' => $method, 'args' => $args]);
                     throw new \Exception("Unsupported method: {$method}");
                 }
             }            
@@ -120,15 +120,27 @@ class CRUDHandler {
         }
     }
 
-    // Apply Condition Helper
     private function applyCondition($query, string $key, $value): void {
+        if (is_array($value)) {
+            // Eğer value bir dizi ise, WHERE IN kullanılır
+            $query->whereIn($key, $value);
+        } elseif (is_null($value)) {
+            // Eğer value null ise, IS NULL kullanılır
+            $query->whereNull($key);
+        } else {
+            // Standart eşleştirme için WHERE kullanılır
+            $query->where($key, '=', $value);
+        }
+    }
+    // Apply Condition Helper
+    /*private function applyCondition($query, string $key, $value): void {
         if (is_array($value)) {
             $operator = $value['operator'] ?? '=';
             $query->where($key, $operator, $value['value']);
         } else {
             $query->where($key, $value);
         }
-    }
+    }*/
     public function deleteExpiredRefreshTokens() {
         try {
             $deletedCount = Capsule::table('refresh_tokens')
