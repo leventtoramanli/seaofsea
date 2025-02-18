@@ -72,13 +72,53 @@ class CRUDHandler {
     // UPDATE
     public function update(string $table, array $data, array $conditions): int|bool {
         return $this->executeQuery(function () use ($table, $data, $conditions) {
+            global $logger;
+    
+            if (empty($data) || empty($conditions)) {
+                $logger->error('🛑 UPDATE HATASI: Eksik parametreler', ['table' => $table, 'data' => $data, 'conditions' => $conditions]);
+                return false;
+            }
+    
+            // ✅ Mevcut veriyi çek ve değişiklik olup olmadığını kontrol et
+            $existingData = Capsule::table($table)
+                ->select(array_keys($data))
+                ->where($conditions)
+                ->first(); // Tek satır getirir
+    
+            if ($existingData) {
+                $existingArray = (array) $existingData;
+                if ($existingArray == $data) {
+                    $logger->info('🔍 UPDATE atlandı: Veri zaten güncel.', ['table' => $table, 'existing' => $existingArray, 'new' => $data]);
+                    return true; // Hiç `update()` yapmadan başarılı dön
+                }
+            }
+    
             $query = Capsule::table($table);
             foreach ($conditions as $key => $value) {
                 $this->applyCondition($query, $key, $value);
             }
-            return $query->update($data);
+    
+            $logger->info('🔍 UPDATE İşlemi Başlıyor', [
+                'table' => $table,
+                'data' => $data,
+                'conditions' => $conditions
+            ]);
+    
+            try {
+                $result = $query->update($data);
+                if ($result) {
+                    $logger->info('✅ UPDATE Başarılı!', ['table' => $table, 'data' => $data, 'conditions' => $conditions]);
+                    return $result;
+                } else {
+                    $logger->info('⚠️ UPDATE yapılmadı: Zaten günceldi.', ['table' => $table, 'data' => $data, 'conditions' => $conditions]);
+                    return true; // FALSE yerine TRUE dön
+                }
+            } catch (Exception $e) {
+                $logger->error('🛑 UPDATE Hata: ' . $e->getMessage());
+                return false;
+            }
         }, 'Update operation failed');
-    }
+    }      
 
     // DELETE
     public function delete(string $table, array $conditions): int|bool {
@@ -152,5 +192,5 @@ class CRUDHandler {
             self::$logger->error('Failed to delete expired refresh tokens.', ['exception' => $e]);
             throw $e;
         }
-    }    
+    }
 }

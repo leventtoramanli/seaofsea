@@ -22,7 +22,8 @@ function jsonResponse($success, $message, $data = null, $errors = null) {
         'message' => $message,
         'data' => $data ?? [],
         'errors' => $errors ?? []
-    ]);
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit();
 }
 
 try {
@@ -39,6 +40,27 @@ try {
 
     // Endpoint yönlendirmesi
     switch ($endpoint) {
+        case 'get_user_info':
+            try {
+                $userId = getUserIdFromToken();
+                if (!$userId) {
+                    jsonResponse(false, 'User ID is required for info.');
+                }
+                $crudHandler = new CRUDHandler();
+                $user = $crudHandler->read('users', ['id' => $userId], ['*'], false);
+        
+                if ($user) {
+                    $user = (array) $user;
+                    unset($user['password'], $user['reset_token'], $user['reset_token_expiry']);
+        
+                    jsonResponse(true, 'User info retrieved successfully.', $user);
+                } else {
+                    jsonResponse(false, 'User not found.');
+                }
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error retrieving user info.', null, ['error' => $e->getMessage()]);
+            }
+            break;        
         case 'login':
             $userHandler = new UserHandler();
             $response = $userHandler->login($data);
@@ -158,22 +180,82 @@ try {
             try {
                 $file = $_FILES['file'] ?? null;
                 $imageBase64 = $data['image_base64'] ?? null;
-                $userId = $data['user_id'] ?? $_POST['userId'] ?? null;
+                $userId = $data['user_id'] ?? $_POST['user_id'] ?? getUserIdFromToken();
                 $meta = $data['meta'] ?? [];
                 $maxSize = 1920;
+        
+                if (!$userId) {
+                    jsonResponse(false, 'User ID is required.');
+                }
         
                 $uploadHandler = new App\Handlers\ImageUploadHandler('images/user/covers');
                 $fileName = $uploadHandler->handleUpload($file, $imageBase64, $userId, $meta, $maxSize);
         
-                // 4. Veritabanını güncelle
                 $crudHandler = new CRUDHandler();
-                $crudHandler->update('users', ['cover_image' => $fileName], ['id' => $userId]);
+                $updateResult = $crudHandler->update('users', ['cover_image' => $fileName], ['id' => $userId]);
         
-                jsonResponse(true, 'User image updated successfully.', ['file_name' => $fileName]);
+                if ($updateResult) {
+                    jsonResponse(true, 'User image updated successfully.', ['file_name' => $fileName]);
+                } else {
+                    jsonResponse(false, 'Failed to update user image in database.');
+                }
             } catch (Exception $e) {
                 jsonResponse(false, 'Error occurred: ' . $e->getMessage());
             }
+            break;            
+
+        case 'update_user':
+            try {
+                $userId = $data['user_id'] ?? null;
+                if (!$userId) {
+                    jsonResponse(false, 'User ID is required.');
+                    break;
+                }
+        
+                unset($data['user_id']); // Güncellenecek veri kümesinden user_id'yi çıkar
+        
+                $userHandler = new UserHandler();
+                $response = $userHandler->updateUser($userId, $data);
+                jsonResponse($response['success'], $response['message']);
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error updating user.', null, ['error' => $e->getMessage()]);
+            }
+            break;            
+        case 'check_user_data':
+            $userId = $data['user_id'] ?? null;
+            if (!$userId) {
+                jsonResponse(false, 'User ID is required.');
+                return;
+            }
+            $userHandler = new UserHandler();
+            $user = $userHandler->getUserById($userId);
+            if ($user) {
+                if (is_array($user) && isset($user[0])) {
+                    $user = $user[0]; 
+                }
+                jsonResponse(true, 'User data retrieved successfully.', ['items' => (array) $user->items]);
+            } else {
+                jsonResponse(false, 'User not found.');
+            }
             break;
+        case 'check_cover_images':
+            try {
+                $userId = getUserIdFromToken();
+                if (!$userId) {
+                    jsonResponse(false, 'User ID is required.');
+                }
+                $crudHandler = new CRUDHandler();
+                $user = $crudHandler->read('users', ['id' => $userId], ['cover_image'], false);
+                $user = (array) $user;
+                if ($user && isset($user['cover_image'])) {
+                    jsonResponse(true, 'User cover image retrieved.', ['cover_image' => $user['cover_image']]);
+                } else {
+                    jsonResponse(false, 'No cover image found.');
+                }
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error fetching cover image: ' . $e->getMessage());
+            }
+            break;                       
         default:
             jsonResponse(false, 'Invalid endpoint.');
     }

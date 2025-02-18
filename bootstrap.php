@@ -44,3 +44,4 @@ function getLoggerInfo(): Logger {
 new DatabaseHandler();
 $userHandler = new UserHandler();
 $userHandler->cleanExpiredTokens();
+getLogger()->error('✅ JWT_SECRET Değeri: ' . getenv('JWT_SECRET'));

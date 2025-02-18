@@ -201,7 +201,7 @@ class UserHandler
 
             if (strtotime($refreshTokenData->expires_at) < time()) {
                 Capsule::table('refresh_tokens')->where('id', $refreshTokenData->id)->delete();
-                return ['success' => false, 'message' => 'Refresh token has expired.'];
+                return ['success' => false, 'message' => 'Refresh token has expired. Please log in again.'];
             }
 
             $user = Capsule::table('users')->where('id', $refreshTokenData->user_id)->first();
@@ -210,16 +210,29 @@ class UserHandler
             }
 
             $newAccessToken = $this->generateJWT($user);
-
+            $newRefreshToken = bin2hex(random_bytes(32));
+            $newRefreshTokenExpiration = date('Y-m-d H:i:s', strtotime('+30 days'));
+            Capsule::table('refresh_tokens')
+            ->where('id', $refreshTokenData->id)
+            ->update(['token' => $newRefreshToken,'expires_at' => $newRefreshTokenExpiration]);
             return [
                 'success' => true,
                 'message' => 'Access token refreshed successfully.',
-                'data' => ['access_token' => $newAccessToken]
+                'data' => [
+                    'access_token' => $newAccessToken,
+                    'refresh_token' => $newRefreshToken,
+                    'expires_at' => $newRefreshTokenExpiration // Refresh token yeni süresi
+                ]
             ];
         } catch (Exception $e) {
             self::$logger->error('Error during token refresh.', ['exception' => $e]);
             return ['success' => false, 'message' => 'An error occurred while refreshing token.'];
         }
+    }
+
+    public function getUserById($userId)
+    {
+        return $this->crud->read('users', ['id' => $userId]);
     }
 
     public function deleteUser($userId)
@@ -325,7 +338,7 @@ class UserHandler
         ]);
 
         return $token;
-    }
+    }  
 
     public function cleanExpiredTokens() {
         try {
@@ -410,3 +423,68 @@ class UserHandler
         }
     }
 }
+function getUserIdFromToken() {
+    // Başlıkları al
+    $headers = getallheaders();
+    $serverHeaders = $_SERVER;
+
+    // 🚨 Log ile test edelim
+    getLogger()->error('🚨 JWT Hata: Başlıklar alındı.', ['headers' => $headers, 'server' => $serverHeaders]);
+
+    // Authorization başlığını almayı dene
+    $authHeader = $headers['Authorization'] 
+        ?? $_SERVER['HTTP_AUTHORIZATION'] 
+        ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] 
+        ?? null;
+
+    // Eğer Authorization başlığı hiç yoksa hata ver
+    if (!$authHeader) {
+        getLogger()->error('🚨 JWT Hata: Authorization başlığı eksik!');
+        return null;
+    }
+
+    // Eğer Bearer formatı yanlışsa hata ver
+    if (strpos($authHeader, 'Bearer ') !== 0) {
+        getLogger()->error('🚨 JWT Hata: Bearer formatı yanlış!');
+        return null;
+    }
+
+    // Bearer kısmını kaldır ve token'ı al
+    $token = str_replace('Bearer ', '', $authHeader);
+
+    try {
+        // JWT'yi decode et
+        $decoded = JWT::decode($token, new Key($_ENV['JWT_SECRET'], 'HS256'));
+        return $decoded->data->id ?? null;
+    } catch (Exception $e) {
+        // Eğer hata "Expired token" ise, refresh_token mekanizmasını tetikle
+        if (strpos($e->getMessage(), 'Expired token') !== false) {
+            getLogger()->error('🚨 JWT Expired: Token süresi dolmuş, yenilenmesi gerekiyor.');
+
+            // Mevcut Refresh Token'i al
+            $refreshToken = getRefreshTokenFromDB($token);
+            if ($refreshToken) {
+                $newToken = refreshAccessToken($refreshToken);
+                if ($newToken) {
+                    return getUserIdFromToken();
+                }
+            }
+
+            getLogger()->error('🚨 Refresh Token Hatası: Kullanıcı çıkış yapmalı.');
+            return null;
+        }
+
+        getLogger()->error('🚨 JWT Decode Hata: ' . $e->getMessage());
+        return null;
+    }
+}
+function getRefreshTokenFromDB($oldAccessToken) {
+    $userData = JWT::decode($oldAccessToken, new Key($_ENV['JWT_SECRET'], 'HS256'));
+
+    $refreshToken = Capsule::table('refresh_tokens')
+        ->where('user_id', $userData->data->id)
+        ->value('token');
+
+    return $refreshToken ?: null;
+}
+
