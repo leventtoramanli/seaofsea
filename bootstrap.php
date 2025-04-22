@@ -9,8 +9,12 @@ use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 
 // .env dosyasını yükle
-$dotenv = Dotenv::createImmutable(__DIR__);
-$dotenv->load();
+if (file_exists(__DIR__ . '/.env')) {
+    $dotenv = Dotenv::createImmutable(__DIR__);
+    $dotenv->load();
+} else {
+    error_log("⚠️ Uyarı: `.env` dosyası bulunamadı! Varsayılan değerler kullanılacak.");
+}
 
 // Logger oluştur (merkezi kullanım için)
 $logger = new Logger('application');
@@ -23,25 +27,41 @@ $loggerInfo->pushHandler(new StreamHandler(__DIR__ . '/logs/appInfo.log', Logger
 set_exception_handler(function ($e) use ($logger) {
     $logger->error('Unhandled Exception', ['exception' => $e]);
     http_response_code(500);
-    echo "An error occurred. Please try again later.";
+    echo json_encode(["success" => false, "message" => "An error occurred. Please try again later."]);
+    exit;
 });
 
 set_error_handler(function ($severity, $message, $file, $line) use ($logger) {
     $logger->error("Error [{$severity}]: {$message} in {$file} on line {$line}");
     http_response_code(500);
-    echo "An error occurred. Please try again later.";
+    echo json_encode(["success" => false, "message" => "An error occurred. Please try again later."]);
+    exit;
 });
 
-// Merkezi Logger erişimi için fonksiyon (isteğe bağlı)
+// Merkezi Logger erişimi için fonksiyon
 function getLogger(): Logger {
     global $logger;
-    return $logger;
+    return $logger ?? new Logger('fallback_logger');
 }
 function getLoggerInfo(): Logger {
     global $loggerInfo;
-    return $loggerInfo;
+    return $loggerInfo ?? new Logger('fallback_logger');
 }
-new DatabaseHandler();
-$userHandler = new UserHandler();
-$userHandler->cleanExpiredTokens();
-getLogger()->error('✅ JWT_SECRET Değeri: ' . getenv('JWT_SECRET'));
+
+// Database ve UserHandler başlatma
+try {
+    new DatabaseHandler();
+    $userHandler = new UserHandler();
+
+    // Kullanıcıların süresi dolmuş tokenlerini temizle
+    $userHandler->cleanExpiredTokens();
+} catch (Exception $e) {
+    error_log("⚠️ Database veya UserHandler başlatma hatası: " . $e->getMessage());
+}
+
+// JWT Secret yükleme ve kontrol
+$jwtSecret = getenv('JWT_SECRET') ?: ($_ENV['JWT_SECRET'] ?? null);
+if (empty($jwtSecret)) {
+    error_log("🚨 JWT Hata: `JWT_SECRET` boş!");
+    die(json_encode(["success" => false, "message" => "JWT Secret is missing!"]));
+}

@@ -25,9 +25,10 @@ class CRUDHandler {
         bool $fetchAll = true,
         array $joins = [],
         array $pagination = [],
-        array $additionaly = []
+        array $additionaly = [],
+        bool $asArray = false
     ): mixed {
-        return $this->executeQuery(function () use ($table, $conditions, $columns, $fetchAll, $joins, $pagination, $additionaly) {
+        return $this->executeQuery(function () use ($table, $conditions, $columns, $fetchAll, $joins, $pagination, $additionaly, $asArray) {
             $query = Capsule::table($table)->select($columns);
 
             foreach ($joins as $join) {
@@ -65,7 +66,13 @@ class CRUDHandler {
                 $query->limit($pagination['limit'])->offset($pagination['offset']);
             }
 
-            return $fetchAll ? $query->get() : $query->first();
+            if ($fetchAll) {
+                $result = $query->get();
+                return $asArray ? $result->map(fn($r) => (array)$r)->toArray() : $result;
+            } else {
+                $result = $query->first();
+                return $asArray ? (array) $result : $result;
+            }            
         }, 'Read operation failed');
     }
 

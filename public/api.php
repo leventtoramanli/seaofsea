@@ -1,5 +1,7 @@
 <?php
 
+header('Content-Type: application/json; charset=UTF-8');
+
 use Carbon\Traits\ToStringFormat;
 
 header("Access-Control-Allow-Origin: *");
@@ -25,11 +27,12 @@ function jsonResponse($success, $message, $data = null, $errors = null) {
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit();
 }
-
 try {
     $loggerInfo = getLoggerInfo(); // Merkezi logger
 
     // Gelen isteği ve endpoint'i al
+    $db = new DatabaseHandler();
+    $userHandler = new UserHandler();
     $data = json_decode(file_get_contents('php://input'), true);
     $endpoint = $_GET['endpoint'] ?? null;
 
@@ -44,7 +47,9 @@ try {
             try {
                 $userId = getUserIdFromToken();
                 if (!$userId) {
+                    http_response_code(401);
                     jsonResponse(false, 'User ID is required for info.');
+                    exit();
                 }
                 $crudHandler = new CRUDHandler();
                 $user = $crudHandler->read('users', ['id' => $userId], ['*'], false);
@@ -58,6 +63,8 @@ try {
                     jsonResponse(false, 'User not found.');
                 }
             } catch (Exception $e) {
+                http_response_code(401);
+                $logger->error('Error retrieving user info.', ['exception' => $e]);
                 jsonResponse(false, 'Error retrieving user info.', null, ['error' => $e->getMessage()]);
             }
             break;        
@@ -66,7 +73,6 @@ try {
             $response = $userHandler->login($data);
             $data = $response['data'] ?? [];
             $message = $response['message'] ?? null;
-        
             jsonResponse($response['success'], $message, $data);
             break;
 
@@ -118,54 +124,66 @@ try {
 
         case 'refresh_token':
             try {
-                $data = json_decode(file_get_contents('php://input'), true);
                 $refreshToken = $data['refresh_token'] ?? null;
-        
-                $logger->info('Refresh token request received.', ['refresh_token' => $refreshToken]);
-        
+                $logger->error("🔄 Refresh Token API Çağrıldı. Gelen token: " . json_encode($refreshToken));
                 if (!$refreshToken) {
-                    jsonResponse(false, 'Refresh token is required.');
+                    throw new Exception('Refresh token is required.');
                 }
-        
-                $userHandler = new UserHandler();
                 $response = $userHandler->refreshAccessToken($refreshToken);
-                jsonResponse($response['success'], $response['message'], $response['data']);
+                $logger->error("📢 Refresh Token Sonucu: " . json_encode($response));
+                jsonResponse($response['success'], $response['message'], $response['data'] ?? null);
             } catch (Exception $e) {
-                $logger->error('Error during token refresh.', ['exception' => $e]);
-                jsonResponse(false, 'An error occurred while refreshing token.', null, ['error' => $e->getMessage()]);
+                $logger->error("❌ Refresh Token Hatası: " . $e->getMessage());
+                jsonResponse(false, 'Error refreshing token.', null, ['error' => $e->getMessage()]);
             }
             break;
         
         case 'logout':
-            $data = json_decode(file_get_contents('php://input'), true);
-
             try {
-                
                 $refreshToken = $data['refresh_token'] ?? null;
                 $deviceUUID = $data['device_uuid'] ?? null;
                 $allDevices = $data['all_devices'] ?? false;
-        
-                $logger->info('Logout request received.', ['refresh_token' => $refreshToken, 'device_uuid' => $deviceUUID, 'all_devices' => $allDevices]);
+
                 if (!$refreshToken) {
-                    jsonResponse(false, 'Refresh token is required.');
+                    throw new Exception('Refresh token is required.');
                 }
-        
-                $userHandler = new UserHandler();
                 $response = $userHandler->logout($refreshToken, $deviceUUID, $allDevices);
                 jsonResponse($response['success'], $response['message']);
             } catch (Exception $e) {
-                $logger->error('Error during logout.', ['exception' => $e]);
-                jsonResponse(false, 'An error occurred while logging out.');
+                jsonResponse(false, 'Error logging out.', null, ['error' => $e->getMessage()]);
             }
             break;
+        case 'change_password':
+            $result = $userHandler->changePassword($data);
+            if (isset($result['success']) && $result['success']) {
+                jsonResponse(true, $result['message']);
+            } else {
+                jsonResponse(false, $result['message']);
+            }
+            break;            
         case 'check_token':
-            $userHandler = new UserHandler();
-            $response = $userHandler->validateToken($data);
-            $data = $response['data'] ?? [];
-            $message = $response['message'] ?? null;
+            $authHeader = getAuthorizationHeader();
+            if (!$authHeader) {
+                jsonResponse(false, "Authorization header missing.", null);
+                exit;
+            }
         
-            jsonResponse($response['success'], $message, $data);
-            break;
+            $userHandler = new UserHandler();
+            $userData = $userHandler->validateToken($authHeader); // Kullanıcıyı doğrula
+        
+            if (!$userData) {
+                jsonResponse(false, "Invalid token.", null);
+                exit;
+            }
+        
+            // 🛠 **TOKEN SÜRESİNİ UZAT!**
+            $newExpiryTime = date('Y-m-d H:i:s', strtotime('+1 hour'));
+            $query = "UPDATE users SET token_expiry = :expiry WHERE id = :user_id";
+            $stmt = $db->prepare($query);
+            $stmt->execute(['expiry' => $newExpiryTime, 'user_id' => $userData['id']]);
+        
+            jsonResponse(true, "Token is valid, expiry extended.", ["expiry" => $newExpiryTime]);
+            break;            
         
         case 'roles':
             $userHandler = new UserHandler();
@@ -176,28 +194,51 @@ try {
                 jsonResponse(false, 'No roles found.');
             }
             break;
-        case 'upload_cover_image':
+        case 'upload_image':
             try {
                 $file = $_FILES['file'] ?? null;
                 $imageBase64 = $data['image_base64'] ?? null;
                 $userId = $data['user_id'] ?? $_POST['user_id'] ?? getUserIdFromToken();
-                $meta = $data['meta'] ?? [];
+                $type = $data['type'] ?? $_POST['type'] ?? null;
                 $maxSize = 1920;
         
-                if (!$userId) {
-                    jsonResponse(false, 'User ID is required.');
+                if (!$userId || !$type) {
+                    jsonResponse(false, 'User ID and type are required.');
                 }
         
-                $uploadHandler = new App\Handlers\ImageUploadHandler('images/user/covers');
-                $fileName = $uploadHandler->handleUpload($file, $imageBase64, $userId, $meta, $maxSize);
+                // 📌 Dinamik olarak klasör belirleme
+                $validTypes = [
+                    'cover' => 'images/user/covers',
+                    'user' => 'images/user',
+                    'blog' => 'images/blog',
+                    'product' => 'images/products',
+                ];
         
+                if (!array_key_exists($type, $validTypes)) {
+                    jsonResponse(false, 'Invalid image type.');
+                }
+        
+                $uploadPath = $validTypes[$type];
+                $uploadHandler = new App\Handlers\ImageUploadHandler($uploadPath);
+                $fileName = $uploadHandler->handleUpload($file, $imageBase64, $userId, $maxSize);
+        
+                // 📌 Hangi kolonu güncelleyeceğimizi belirleme
+                $columnMappings = [
+                    'cover' => 'cover_image',
+                    'user' => 'user_image',
+                    'blog' => 'blog_image',
+                    'product' => 'product_image',
+                ];
+                $column = $columnMappings[$type];
+        
+                // 📌 Veritabanında ilgili alanı güncelle
                 $crudHandler = new CRUDHandler();
-                $updateResult = $crudHandler->update('users', ['cover_image' => $fileName], ['id' => $userId]);
+                $updateResult = $crudHandler->update('users', [$column => $fileName], ['id' => $userId]);
         
                 if ($updateResult) {
-                    jsonResponse(true, 'User image updated successfully.', ['file_name' => $fileName]);
+                    jsonResponse(true, ucfirst($column) . ' updated successfully.', ['file_name' => $fileName]);
                 } else {
-                    jsonResponse(false, 'Failed to update user image in database.');
+                    jsonResponse(false, 'Failed to update image in database.');
                 }
             } catch (Exception $e) {
                 jsonResponse(false, 'Error occurred: ' . $e->getMessage());
@@ -207,6 +248,7 @@ try {
         case 'update_user':
             try {
                 $userId = $data['user_id'] ?? null;
+                $newEmail = $data['email'] ?? null;
                 if (!$userId) {
                     jsonResponse(false, 'User ID is required.');
                     break;
@@ -255,7 +297,161 @@ try {
             } catch (Exception $e) {
                 jsonResponse(false, 'Error fetching cover image: ' . $e->getMessage());
             }
-            break;                       
+            break;
+        case 'get_notification_settings':
+            $result = $userHandler->getNotificationSettings($data);
+            if (isset($result['success']) && $result['success']) {
+                jsonResponse(true, $result['message'] ?? 'Success', $result['data'] ?? []);
+            } else {
+                jsonResponse(false, $result['message'] ?? 'An error occurred');
+            }
+            break;            
+            
+        case 'save_notification_settings':
+            $result = $userHandler->saveNotificationSettings($data);
+            jsonResponse($result['success'], $result['message']);
+            break;
+        case 'create_company':
+            $crudHandler = new CRUDHandler();
+            $userId = getUserIdFromToken();
+        
+            if (!$userId || empty($data['name'])) {
+                jsonResponse(false, 'Company name is required.');
+            }
+        
+            $companyId = $crudHandler->create('companies', [
+                'name' => $data['name'],
+                'created_by' => $userId,
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+        
+            if ($companyId) {
+                $crudHandler->create('user_company', [
+                    'user_id' => $userId,
+                    'company_id' => $companyId,
+                    'role' => 'admin',
+                    'is_active' => true,
+                ]);
+        
+                jsonResponse(true, 'Company created successfully.', ['company_id' => $companyId]);
+            } else {
+                jsonResponse(false, 'Failed to create company.');
+            }
+            break;            
+        case 'get_user_companies':
+            try {
+                $userId = getUserIdFromToken();
+                if (!$userId) {
+                    jsonResponse(false, 'User ID is required.');
+                }
+        
+                $crudHandler = new CRUDHandler();
+                $joins = [[
+                    'table' => 'companies',
+                    'on1' => 'user_company.company_id',
+                    'operator' => '=',
+                    'on2' => 'companies.id'
+                ]];
+        
+                $conditions = ['user_company.user_id' => $userId];
+                $columns = ['companies.id', 'companies.name', 'companies.created_at'];
+        
+                $companies = $crudHandler->read('user_company', $conditions, $columns, true, $joins);
+                jsonResponse(true, 'Companies fetched successfully.', $companies);
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error fetching companies.', null, ['error' => $e->getMessage()]);
+            }
+            break;
+            
+        case 'get_companies':
+            try {
+                $page = (int) ($_GET['page'] ?? 1);
+                $limit = (int) ($_GET['limit'] ?? 25);
+                $offset = ($page - 1) * $limit;
+        
+                $crudHandler = new CRUDHandler();
+                $companies = $crudHandler->read(
+                    'companies',
+                    [],
+                    ['id', 'name', 'logo', 'created_at'],
+                    true,
+                    [],
+                    ['limit' => $limit, 'offset' => $offset],
+                    ['orderBy' => ['created_at' => 'desc']],
+                    true
+                );
+        
+                $total = $crudHandler->count('companies');
+        
+                jsonResponse(true, 'Companies retrieved successfully.', [
+                    'items' => $companies,
+                    'pagination' => [
+                        'total' => $total,
+                        'page' => $page,
+                        'limit' => $limit,
+                    ]
+                ]);
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error retrieving companies.', null, ['error' => $e->getMessage()]);
+            }
+            break;
+        case 'update_company':
+            try {
+                $companyId = $data['company_id'] ?? null;
+                $name = $data['name'] ?? null;
+        
+                if (!$companyId || !$name) {
+                    jsonResponse(false, 'Company ID and name are required.');
+                }
+        
+                $userId = getUserIdFromToken();
+                $crudHandler = new CRUDHandler();
+        
+                // Kullanıcının admin olup olmadığını kontrol et
+                $relation = $crudHandler->read('user_company', [
+                    'company_id' => $companyId,
+                    'user_id' => $userId,
+                    'role' => 'admin'
+                ], ['id'], false);
+        
+                if (!$relation) {
+                    jsonResponse(false, 'Unauthorized.');
+                }
+        
+                $updated = $crudHandler->update('companies', ['name' => $name], ['id' => $companyId]);
+                jsonResponse(true, 'Company updated.', ['updated' => $updated]);
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error updating company.', null, ['error' => $e->getMessage()]);
+            }
+            break;
+        case 'delete_company':
+            try {
+                $companyId = $data['company_id'] ?? null;
+                $userId = getUserIdFromToken();
+        
+                if (!$companyId) {
+                    jsonResponse(false, 'Company ID is required.');
+                }
+        
+                $crudHandler = new CRUDHandler();
+        
+                $relation = $crudHandler->read('user_company', [
+                    'company_id' => $companyId,
+                    'user_id' => $userId,
+                    'role' => 'admin'
+                ], ['id'], false);
+        
+                if (!$relation) {
+                    jsonResponse(false, 'Unauthorized.');
+                }
+        
+                $deleted = $crudHandler->delete('companies', ['id' => $companyId]);
+                jsonResponse(true, 'Company deleted.', ['deleted' => $deleted]);
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error deleting company.', null, ['error' => $e->getMessage()]);
+            }
+            break;
         default:
             jsonResponse(false, 'Invalid endpoint.');
     }

@@ -5,6 +5,7 @@ require_once __DIR__ . '/CRUDHandlers.php';
 use Firebase\JWT\Key;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Firebase\JWT\JWT;
+use Firebase\JWT\ExpiredException;
 
 class UserHandler
 {
@@ -116,7 +117,7 @@ class UserHandler
 
         // Şifre doğrulaması
         if (!$user || !password_verify($data['password'], $user->password)) {
-            self::$logger->warning('Login failed.', [
+            self::$logger->error('Login failed.', [
                 'email' => $data['email'],
                 'reason' => !$user ? 'User not found' : 'Incorrect password'
             ]);
@@ -212,6 +213,7 @@ class UserHandler
             $newAccessToken = $this->generateJWT($user);
             $newRefreshToken = bin2hex(random_bytes(32));
             $newRefreshTokenExpiration = date('Y-m-d H:i:s', strtotime('+30 days'));
+
             Capsule::table('refresh_tokens')
             ->where('id', $refreshTokenData->id)
             ->update(['token' => $newRefreshToken,'expires_at' => $newRefreshTokenExpiration]);
@@ -233,6 +235,42 @@ class UserHandler
     public function getUserById($userId)
     {
         return $this->crud->read('users', ['id' => $userId]);
+    }
+
+    public static function getUserIdFromToken(): ?int
+    {
+        try {
+            $headers = getallheaders();
+            $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? null;
+
+            if (!$authHeader || !preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
+                self::$logger->error('❌ Token header formatı geçersiz.');
+                return null;
+            }
+
+            $token = $matches[1];
+            $secret = $_ENV['JWT_SECRET'] ?? getenv('JWT_SECRET');
+
+            if (!$secret) {
+                self::$logger->error('❌ JWT_SECRET tanımsız!');
+                return null;
+            }
+
+            $decoded = JWT::decode($token, new Key($secret, 'HS256'));
+
+            self::$logger->info("✅ Token çözüldü. User ID: " . ($decoded->data->id ?? 'null'));
+
+            return $decoded->data->id ?? null;
+        }
+        catch (ExpiredException $e) {
+            http_response_code(401); // 🔥 Flutter burada refresh tetikler
+            self::$logger->warning('⏰ Token süresi dolmuş: ' . $e->getMessage());
+            return null;
+        }
+        catch (Exception $e) {
+            self::$logger->error('❌ JWT decode hatası: ' . $e->getMessage());
+            return null;
+        }
     }
 
     public function deleteUser($userId)
@@ -319,7 +357,7 @@ class UserHandler
             'iss' => 'https://seaofsea.com',
             'aud' => 'https://seaofsea.com',
             'iat' => time(),
-            'exp' => time() + 60,
+            'exp' => time() + 600,
             'data' => [
                 'id' => $user->id,
                 'email' => $user->email,
@@ -330,14 +368,7 @@ class UserHandler
                 'is_verified' => $user->is_verified
             ]
         ];
-
-        $token = JWT::encode($payload, $secretKey, 'HS256');
-        self::$logger->info('JWT generated for user.', [
-            'user_id' => $user->id,
-            'email' => $user->email
-        ]);
-
-        return $token;
+        return JWT::encode($payload, $secretKey, 'HS256');
     }  
 
     public function cleanExpiredTokens() {
@@ -354,31 +385,26 @@ class UserHandler
 
     public function logout($refreshToken, $deviceUUID = null, $allDevices = false) {
     
+        try {
             if ($allDevices) {
                 // Tüm cihazlardan çıkış
                 $refreshTokenData = Capsule::table('refresh_tokens')->where('token', $refreshToken)->first();
     
                 if ($refreshTokenData) {
                     Capsule::table('refresh_tokens')->where('user_id', $refreshTokenData->user_id)->delete();
-                    self::$logger->info('All refresh tokens for the user deleted.', ['user_id' => $refreshTokenData->user_id]);
-                } else {
-                    // Token bulunamazsa yine de devam et
-                    self::$logger->warning('Refresh token not found for all devices logout.', ['refresh_token' => $refreshToken]);
                 }
             } else {
                 // Sadece mevcut cihazdan çıkış
-                $deleted = Capsule::table('refresh_tokens')
+                Capsule::table('refresh_tokens')
                 ->where('token', $refreshToken)
                 ->where('device_info', $deviceUUID)
                 ->delete();
-    
-                if (!$deleted) {
-                    // Token bulunamazsa uyarı logu, ama işleme devam
-                    self::$logger->warning('Refresh token not found for single device logout.', ['refresh_token' => $refreshToken]);
-                }
+                return ['success' => true, 'message' => 'Logout successful.'];
             }
-    
-            return ['success' => true, 'message' => 'Logged out successfully.'];
+        } catch (Exception $e) {
+            self::$logger->error('Error while logging out.', ['exception' => $e]);
+            return ['success' => false, 'message' => 'An error occurred while logging out.'];
+        }
     }   
     public function validateToken($data)
     {
@@ -422,7 +448,92 @@ class UserHandler
             throw new Exception('Invalid or expired token.');
         }
     }
+    public function getNotificationSettings($data)
+    {
+        $userId = $data['user_id'] ?? self::getUserIdFromToken();
+
+        if (!is_numeric($userId) || $userId <= 0) {
+            return ['success' => false, 'message' => 'User ID is required!'];
+        }
+
+        $settings = $this->crud->read('users', conditions: ['id' => $userId], fetchAll: false);
+
+        if (!$settings) {
+            return ['success' => false, 'message' => 'User not found.'];
+        }
+
+        // stdClass yerine array döndür
+        $settingsArray = is_object($settings) ? json_decode(json_encode($settings), true) : $settings;
+
+        return [
+            'success' => true,
+            'message' => 'Notification settings retrieved successfully.',
+            'data' => [
+                'email_notifications' => $settingsArray['email_notifications'] ?? true,
+                'app_notifications' => $settingsArray['app_notifications'] ?? true,
+                'weekly_summary' => $settingsArray['weekly_summary'] ?? false
+            ]
+        ];
+    }
+
+    public function saveNotificationSettings($data)
+    {
+        $userId = $data['user_id'] ?? self::getUserIdFromToken();
+        if (!$userId) {
+            return ['success' => false, 'message' => 'User ID is required.'];
+        }
+
+        $updateData = [
+            'email_notifications' => $data['email_notifications'] ?? true,
+            'app_notifications' => $data['app_notifications'] ?? true,
+            'weekly_summary' => $data['weekly_summary'] ?? false
+        ];
+
+        $update = $this->crud->update('users', $updateData, conditions: ['id' => $userId]);
+
+        return $update
+            ? ['success' => true, 'message' => 'Notification settings updated.']
+            : ['success' => false, 'message' => 'Update failed.'];
+    }
+
+    public function changePassword($data)
+{
+    $userId = $this->getUserIdFromToken();
+    if (!$userId) {
+        return ['success' => false, 'message' => 'Unauthorized.'];
+    }
+
+    $currentPassword = $data['current_password'] ?? null;
+    $newPassword = $data['new_password'] ?? null;
+
+    if (!$currentPassword || !$newPassword) {
+        return ['success' => false, 'message' => 'All fields are required.'];
+    }
+
+    $user = $this->crud->read('users', conditions: ['id' => $userId], fetchAll: false);
+
+    if (!$user) {
+        return ['success' => false, 'message' => 'User not found.'];
+    }
+
+    // Parola doğrulama
+    if (!password_verify($currentPassword, $user->password)) {
+        return ['success' => false, 'message' => 'Current password is incorrect.'];
+    }
+
+    // Parolayı güncelle
+    $hashedPassword = password_hash($newPassword, PASSWORD_DEFAULT);
+    $updated = $this->crud->update('users', ['password' => $hashedPassword], ['id' => $userId]);
+
+    if ($updated) {
+        return ['success' => true, 'message' => 'Password updated successfully.'];
+    } else {
+        return ['success' => false, 'message' => 'Failed to update password.'];
+    }
 }
+
+}
+
 function getUserIdFromToken() {
     // Başlıkları al
     $headers = getallheaders();
