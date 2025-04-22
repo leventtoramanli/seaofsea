@@ -312,145 +312,32 @@ try {
             jsonResponse($result['success'], $result['message']);
             break;
         case 'create_company':
-            $crudHandler = new CRUDHandler();
-            $userId = getUserIdFromToken();
-        
-            if (!$userId || empty($data['name'])) {
-                jsonResponse(false, 'Company name is required.');
-            }
-        
-            $companyId = $crudHandler->create('companies', [
-                'name' => $data['name'],
-                'created_by' => $userId,
-                'created_at' => date('Y-m-d H:i:s'),
-                'updated_at' => date('Y-m-d H:i:s'),
-            ]);
-        
-            if ($companyId) {
-                $crudHandler->create('user_company', [
-                    'user_id' => $userId,
-                    'company_id' => $companyId,
-                    'role' => 'admin',
-                    'is_active' => true,
-                ]);
-        
-                jsonResponse(true, 'Company created successfully.', ['company_id' => $companyId]);
-            } else {
-                jsonResponse(false, 'Failed to create company.');
-            }
-            break;            
         case 'get_user_companies':
-            try {
-                $userId = getUserIdFromToken();
-                if (!$userId) {
-                    jsonResponse(false, 'User ID is required.');
-                }
-        
-                $crudHandler = new CRUDHandler();
-                $joins = [[
-                    'table' => 'companies',
-                    'on1' => 'user_company.company_id',
-                    'operator' => '=',
-                    'on2' => 'companies.id'
-                ]];
-        
-                $conditions = ['user_company.user_id' => $userId];
-                $columns = ['companies.id', 'companies.name', 'companies.created_at'];
-        
-                $companies = $crudHandler->read('user_company', $conditions, $columns, true, $joins);
-                jsonResponse(true, 'Companies fetched successfully.', $companies);
-            } catch (Exception $e) {
-                jsonResponse(false, 'Error fetching companies.', null, ['error' => $e->getMessage()]);
-            }
-            break;
-            
         case 'get_companies':
-            try {
-                $page = (int) ($_GET['page'] ?? 1);
-                $limit = (int) ($_GET['limit'] ?? 25);
-                $offset = ($page - 1) * $limit;
-        
-                $crudHandler = new CRUDHandler();
-                $companies = $crudHandler->read(
-                    'companies',
-                    [],
-                    ['id', 'name', 'logo', 'created_at'],
-                    true,
-                    [],
-                    ['limit' => $limit, 'offset' => $offset],
-                    ['orderBy' => ['created_at' => 'desc']],
-                    true
-                );
-        
-                $total = $crudHandler->count('companies');
-        
-                jsonResponse(true, 'Companies retrieved successfully.', [
-                    'items' => $companies,
-                    'pagination' => [
-                        'total' => $total,
-                        'page' => $page,
-                        'limit' => $limit,
-                    ]
-                ]);
-            } catch (Exception $e) {
-                jsonResponse(false, 'Error retrieving companies.', null, ['error' => $e->getMessage()]);
-            }
-            break;
         case 'update_company':
-            try {
-                $companyId = $data['company_id'] ?? null;
-                $name = $data['name'] ?? null;
-        
-                if (!$companyId || !$name) {
-                    jsonResponse(false, 'Company ID and name are required.');
-                }
-        
-                $userId = getUserIdFromToken();
-                $crudHandler = new CRUDHandler();
-        
-                // Kullanıcının admin olup olmadığını kontrol et
-                $relation = $crudHandler->read('user_company', [
-                    'company_id' => $companyId,
-                    'user_id' => $userId,
-                    'role' => 'admin'
-                ], ['id'], false);
-        
-                if (!$relation) {
-                    jsonResponse(false, 'Unauthorized.');
-                }
-        
-                $updated = $crudHandler->update('companies', ['name' => $name], ['id' => $companyId]);
-                jsonResponse(true, 'Company updated.', ['updated' => $updated]);
-            } catch (Exception $e) {
-                jsonResponse(false, 'Error updating company.', null, ['error' => $e->getMessage()]);
-            }
-            break;
         case 'delete_company':
-            try {
-                $companyId = $data['company_id'] ?? null;
-                $userId = getUserIdFromToken();
-        
-                if (!$companyId) {
-                    jsonResponse(false, 'Company ID is required.');
-                }
-        
-                $crudHandler = new CRUDHandler();
-        
-                $relation = $crudHandler->read('user_company', [
-                    'company_id' => $companyId,
-                    'user_id' => $userId,
-                    'role' => 'admin'
-                ], ['id'], false);
-        
-                if (!$relation) {
-                    jsonResponse(false, 'Unauthorized.');
-                }
-        
-                $deleted = $crudHandler->delete('companies', ['id' => $companyId]);
-                jsonResponse(true, 'Company deleted.', ['deleted' => $deleted]);
-            } catch (Exception $e) {
-                jsonResponse(false, 'Error deleting company.', null, ['error' => $e->getMessage()]);
+            require_once __DIR__ . '/../lib/handlers/CompanyHandler.php';
+            $companyHandler = new CompanyHandler();
+
+            switch ($endpoint) {
+                case 'create_company':
+                    $response = $companyHandler->createCompany($data);
+                    break;
+                case 'get_user_companies':
+                    $response = $companyHandler->getUserCompanies($data);
+                    break;
+                case 'get_companies':
+                    $response = $companyHandler->getAllCompanies($data);
+                    break;
+                case 'update_company':
+                    $response = $companyHandler->updateCompany($data);
+                    break;
+                case 'delete_company':
+                    $response = $companyHandler->deleteCompany($data);
+                    break;
             }
+
+            jsonResponse($response['success'], $response['message'], $response['data'] ?? null, $response['errors'] ?? null);
             break;
         default:
             jsonResponse(false, 'Invalid endpoint.');
