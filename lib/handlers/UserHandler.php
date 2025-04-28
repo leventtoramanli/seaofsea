@@ -51,7 +51,7 @@ class UserHandler
             self::$logger->warning('Validation Errors', ['errors' => $errors]);
             return [
                 'success' => false,
-                'message' => $errors[0], // İlk hatayı kullanıcıya mesaj olarak göster
+                'message' => $errors[0],
                 'errors' => $errors
             ];
         }
@@ -535,60 +535,55 @@ class UserHandler
 }
 
 function getUserIdFromToken() {
-    // Başlıkları al
     $headers = getallheaders();
     $serverHeaders = $_SERVER;
 
-    // 🚨 Log ile test edelim
-    getLogger()->error('🚨 JWT Hata: Başlıklar alındı.', ['headers' => $headers, 'server' => $serverHeaders]);
-
-    // Authorization başlığını almayı dene
-    $authHeader = $headers['Authorization'] 
-        ?? $_SERVER['HTTP_AUTHORIZATION'] 
-        ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] 
+    $authHeader = $headers['Authorization']
+        ?? $_SERVER['HTTP_AUTHORIZATION']
+        ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
         ?? null;
 
-    // Eğer Authorization başlığı hiç yoksa hata ver
     if (!$authHeader) {
         getLogger()->error('🚨 JWT Hata: Authorization başlığı eksik!');
-        return null;
+        http_response_code(401);
+        jsonResponse(false, 'Authorization header missing.', null, null, 401);
     }
 
-    // Eğer Bearer formatı yanlışsa hata ver
     if (strpos($authHeader, 'Bearer ') !== 0) {
         getLogger()->error('🚨 JWT Hata: Bearer formatı yanlış!');
-        return null;
+        http_response_code(401);
+        jsonResponse(false, 'Invalid Bearer format.', null, null, 401);
     }
 
-    // Bearer kısmını kaldır ve token'ı al
     $token = str_replace('Bearer ', '', $authHeader);
 
     try {
-        // JWT'yi decode et
         $decoded = JWT::decode($token, new Key($_ENV['JWT_SECRET'], 'HS256'));
         return $decoded->data->id ?? null;
     } catch (Exception $e) {
-        // Eğer hata "Expired token" ise, refresh_token mekanizmasını tetikle
         if (strpos($e->getMessage(), 'Expired token') !== false) {
-            getLogger()->error('🚨 JWT Expired: Token süresi dolmuş, yenilenmesi gerekiyor.');
+            getLogger()->error('🚨 JWT Expired: Token süresi dolmuş.', ['error' => $e->getMessage()]);
 
-            // Mevcut Refresh Token'i al
+            // Eğer refresh token kullanılacaksa bu kısım kalabilir
             $refreshToken = getRefreshTokenFromDB($token);
             if ($refreshToken) {
                 $newToken = refreshAccessToken($refreshToken);
                 if ($newToken) {
-                    return getUserIdFromToken();
+                    return getUserIdFromToken(); // 🔁 Yeni token ile tekrar dene
                 }
             }
 
             getLogger()->error('🚨 Refresh Token Hatası: Kullanıcı çıkış yapmalı.');
-            return null;
+            http_response_code(401);
+            jsonResponse(false, 'JWT expired, please reauthenticate.', null, null, 401);
         }
 
         getLogger()->error('🚨 JWT Decode Hata: ' . $e->getMessage());
-        return null;
+        http_response_code(401);
+        jsonResponse(false, 'Invalid token.', null, null, 401);
     }
 }
+
 function getRefreshTokenFromDB($oldAccessToken) {
     $userData = JWT::decode($oldAccessToken, new Key($_ENV['JWT_SECRET'], 'HS256'));
 

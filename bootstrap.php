@@ -27,14 +27,14 @@ $loggerInfo->pushHandler(new StreamHandler(__DIR__ . '/logs/appInfo.log', Logger
 set_exception_handler(function ($e) use ($logger) {
     $logger->error('Unhandled Exception', ['exception' => $e]);
     http_response_code(500);
-    echo json_encode(["success" => false, "message" => "An error occurred. Please try again later."]);
+    echo json_encode(["success" => false, "message" => "An error occurred. Please try again later."], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 });
 
 set_error_handler(function ($severity, $message, $file, $line) use ($logger) {
     $logger->error("Error [{$severity}]: {$message} in {$file} on line {$line}");
     http_response_code(500);
-    echo json_encode(["success" => false, "message" => "An error occurred. Please try again later."]);
+    echo json_encode(["success" => false, "message" => "An error occurred. Please try again later."], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 });
 
@@ -46,6 +46,30 @@ function getLogger(): Logger {
 function getLoggerInfo(): Logger {
     global $loggerInfo;
     return $loggerInfo ?? new Logger('fallback_logger');
+}
+
+function getAuthorizationHeader(): ?string {
+    $headers = null;
+    if (isset($_SERVER['Authorization'])) {
+        $headers = trim($_SERVER["Authorization"]);
+    } elseif (isset($_SERVER['HTTP_AUTHORIZATION'])) { // Nginx or fast CGI
+        $headers = trim($_SERVER["HTTP_AUTHORIZATION"]);
+    } elseif (function_exists('apache_request_headers')) {
+        $requestHeaders = apache_request_headers();
+        $requestHeaders = array_change_key_case($requestHeaders, CASE_LOWER);
+        if (isset($requestHeaders['authorization'])) {
+            $headers = trim($requestHeaders['authorization']);
+        }
+    }
+    return $headers;
+}
+
+function getBearerToken(): ?string {
+    $authHeader = getAuthorizationHeader();
+    if (!$authHeader || !str_starts_with($authHeader, 'Bearer ')) {
+        return null;
+    }
+    return substr($authHeader, 7); // Bearer sonrasını al
 }
 
 // Database ve UserHandler başlatma

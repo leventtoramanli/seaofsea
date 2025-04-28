@@ -16,17 +16,71 @@ require_once __DIR__ . '/../lib/handlers/PasswordResetHandler.php';
 require_once __DIR__ . '/../lib/handlers/CRUDHandlers.php';
 require_once __DIR__ . '/../lib/handlers/ImageUploadHandler.php';
 
+$publicEndpoints = [
+    'login',
+    'register',
+    'reset_password',
+    'reset_password_request',
+    'refresh_token',
+    'check_token'
+];
+
+$endpoint = $_GET['endpoint'] ?? null;
+$tokenRequired = !in_array($endpoint, $publicEndpoints);
+
+// Eğer token gerekiyorsa ve geçerli değilse, daha başta kes
+if ($tokenRequired) {
+    try {
+        $token = getBearerToken();
+        if (!$token) {
+            http_response_code(401);
+            jsonResponse(false, 'Bearer token is missing.', [], [], 401);
+        }
+
+        $userHandler = new UserHandler();
+        $user = $userHandler->validateToken($token); // Token valid mi kontrol et
+        if (!$user) {
+            http_response_code(401);
+            jsonResponse(false, 'Invalid or expired token.', [], ['error' => 'Expired or invalid'], 401);
+        }
+    } catch (Exception $e) {
+        http_response_code(401);
+        jsonResponse(false, 'Token validation failed.', [], ['error' => $e->getMessage()], 401);
+    }
+}
+
+
+
 // JSON yanıt fonksiyonu
-function jsonResponse($success, $message, $data = null, $errors = null) {
+function jsonResponse($success, $message, $data = null, $errors = null, $code = 200, $showMessage = true) {
+    http_response_code($code);
     header('Content-Type: application/json');
     echo json_encode([
         'success' => $success,
         'message' => $message,
         'data' => $data ?? [],
-        'errors' => $errors ?? []
+        'errors' => $errors ?? null,
+        'showMessage' => $showMessage
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit();
 }
+/*
+function jsonResponse($success, $message, $data = [], $errors = [], $code = 200, $showMessage = true) {
+    http_response_code($code);
+    header('Content-Type: application/json');
+
+    $response = [
+        'success' => $success,
+        'message' => $message,
+        'data' => is_array($data) ? $data : [],
+        'errors' => is_array($errors) ? $errors : [],
+        'showMessage' => $showMessage
+    ];
+
+    echo json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit();
+}*/
+
 try {
     $loggerInfo = getLoggerInfo(); // Merkezi logger
 
@@ -40,7 +94,6 @@ try {
     if (!$endpoint) {
         jsonResponse(false, 'Endpoint is required.');
     }
-
     // Endpoint yönlendirmesi
     switch ($endpoint) {
         case 'get_user_info':
@@ -58,14 +111,14 @@ try {
                     $user = (array) $user;
                     unset($user['password'], $user['reset_token'], $user['reset_token_expiry']);
         
-                    jsonResponse(true, 'User info retrieved successfully.', $user);
+                    jsonResponse(true, 'User info retrieved successfully.', $user, null, 200, false);
                 } else {
                     jsonResponse(false, 'User not found.');
                 }
             } catch (Exception $e) {
                 http_response_code(401);
                 $logger->error('Error retrieving user info.', ['exception' => $e]);
-                jsonResponse(false, 'Error retrieving user info.', null, ['error' => $e->getMessage()]);
+                jsonResponse(false, 'Error retrieving user info.', null, ['error' => $e->getMessage()], 401);
             }
             break;        
         case 'login':
@@ -119,7 +172,7 @@ try {
         case 'get_users_with_roles':
             $userHandler = new UserHandler();
             $response = $userHandler->getUsersWithRoles();
-            jsonResponse(true, 'Users retrieved successfully.', $response);
+            jsonResponse(true, 'Users retrieved successfully.', $response, null, 200, false);
             break;
 
         case 'refresh_token':
@@ -131,7 +184,7 @@ try {
                 }
                 $response = $userHandler->refreshAccessToken($refreshToken);
                 $logger->error("📢 Refresh Token Sonucu: " . json_encode($response));
-                jsonResponse($response['success'], $response['message'], $response['data'] ?? null);
+                jsonResponse($response['success'], $response['message'], $response['data'] ?? null, $response['errors'] ?? null, $response['statusCode'] ?? 200, false);
             } catch (Exception $e) {
                 $logger->error("❌ Refresh Token Hatası: " . $e->getMessage());
                 jsonResponse(false, 'Error refreshing token.', null, ['error' => $e->getMessage()]);
@@ -148,7 +201,7 @@ try {
                     throw new Exception('Refresh token is required.');
                 }
                 $response = $userHandler->logout($refreshToken, $deviceUUID, $allDevices);
-                jsonResponse($response['success'], $response['message']);
+                jsonResponse($response['success'], $response['message'], $response['data'] ?? null, $response['errors'] ?? null, $response['statusCode'] ?? 200, false);
             } catch (Exception $e) {
                 jsonResponse(false, 'Error logging out.', null, ['error' => $e->getMessage()]);
             }
@@ -182,7 +235,7 @@ try {
             $stmt = $db->prepare($query);
             $stmt->execute(['expiry' => $newExpiryTime, 'user_id' => $userData['id']]);
         
-            jsonResponse(true, "Token is valid, expiry extended.", ["expiry" => $newExpiryTime]);
+            jsonResponse(true, "Token is valid, expiry extended.", ["expiry" => $newExpiryTime], null, 200, false);
             break;            
         
         case 'roles':
@@ -234,7 +287,7 @@ try {
                 // 📌 Veritabanında ilgili alanı güncelle
                 $crudHandler = new CRUDHandler();
                 $updateResult = $crudHandler->update('users', [$column => $fileName], ['id' => $userId]);
-        
+    
                 if ($updateResult) {
                     jsonResponse(true, ucfirst($column) . ' updated successfully.', ['file_name' => $fileName]);
                 } else {
@@ -243,8 +296,101 @@ try {
             } catch (Exception $e) {
                 jsonResponse(false, 'Error occurred: ' . $e->getMessage());
             }
-            break;            
+            break;
+        case 'upload_image_general':
+            try {
+                $file = $_FILES['file'] ?? null;
+                $userId = $data['user_id'] ?? $_POST['user_id'] ?? getUserIdFromToken();
+                $folder = $data['folder'] ?? $_POST['folder'] ?? 'images/';
+                $prefix = $data['prefix'] ?? $_POST['prefix'] ?? 'file';
+                $maxSize = $data['max_size'] ?? $_POST['max_size'] ?? 1920;
+                $meta = $data['meta'] ?? [];
+        
+                // 🔥 Thumb seçenekleri
+                $thumb = isset($data['thumb']) ? filter_var($data['thumb'], FILTER_VALIDATE_BOOLEAN) : (isset($_POST['thumb']) ? filter_var($_POST['thumb'], FILTER_VALIDATE_BOOLEAN) : true);
+                $thumbSize = isset($data['thumbSize']) ? (int)$data['thumbSize'] : (isset($_POST['thumbSize']) ? (int)$_POST['thumbSize'] : 128);
+        
+                if (!$file || !$userId || !$folder || !$prefix) {
+                    getLogger()->error('❌ Upload Image General - Missing parameters.', [
+                        'file' => $file,
+                        'userId' => $userId,
+                        'folder' => $folder,
+                        'prefix' => $prefix
+                    ]);
+                    jsonResponse(false, 'File, userId, folder and prefix are required.');
+                }
+        
+                if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
+                    getLogger()->error('❌ Upload Image General - File upload error.', [
+                        'file' => $file
+                    ]);
+                    jsonResponse(false, 'File upload error.');
+                }
+        
+                // ✅ Ana upload işlemi
+                $uploadHandler = new App\Handlers\ImageUploadHandler($folder);
+                $fileName = $uploadHandler->handleUploadWithPrefix($file, $userId, $prefix, $meta, $maxSize);
+        
+                if (!$fileName) {
+                    getLogger()->error('❌ Upload Image General - File save failed.', [
+                        'file' => $file,
+                        'userId' => $userId,
+                        'folder' => $folder
+                    ]);
+                    jsonResponse(false, 'Failed to upload image.');
+                }
+        
+                // ✅ Thumb oluşturulacaksa
+                if ($thumb) {
+                    $baseDir = realpath(__DIR__ . '/../../seaofsea');
+                    $originalPath = $baseDir . '/' . trim($folder, '/') . '/' . $fileName;
+                    $thumbFolder = $baseDir . '/' . trim($folder, '/') . '/thumb/';
 
+                    if (!is_dir($thumbFolder)) {
+                        mkdir($thumbFolder, 0755, true);
+                    }
+        
+                    $thumbPath = $thumbFolder . $fileName;
+        
+                    if (file_exists($originalPath)) {
+                        // İlk önce thumb'a kopyala
+                        if (!copy($originalPath, $thumbPath)) {
+                            getLogger()->error('❌ Thumbnail copy failed.', [
+                                'original' => $originalPath,
+                                'thumb' => $thumbPath
+                            ]);
+                            jsonResponse(false, 'Failed to copy file for thumbnail.');
+                        }
+        
+                        // Sonra thumbı yeniden boyutlandır
+                        $thumbHandler = new App\Handlers\ImageUploadHandler(str_replace('/thumb/', '/', $folder));
+                        $thumbHandler->resizeImage($thumbPath, $thumbSize);
+        
+                        getLoggerInfo()->info('✅ Thumbnail created successfully.', [
+                            'thumbPath' => $thumbPath
+                        ]);
+                    } else {
+                        getLogger()->error('❌ Original image not found for thumbnail creation.', [
+                            'original' => $originalPath
+                        ]);
+                        jsonResponse(false, 'Original image not found for thumbnail.');
+                    }
+                }
+        
+                getLoggerInfo()->info('✅ Upload Image General - Image uploaded successfully.', [
+                    'file_name' => $fileName,
+                    'folder' => $folder
+                ]);
+        
+                jsonResponse(true, 'Image uploaded successfully.', ['file_name' => $fileName]);
+        
+            } catch (Exception $e) {
+                getLogger()->error('❌ Upload Image General Exception', ['exception' => $e]);
+                jsonResponse(false, 'Error occurred: ' . $e->getMessage());
+            }
+            break;
+            
+            
         case 'update_user':
             try {
                 $userId = $data['user_id'] ?? null;
@@ -262,7 +408,7 @@ try {
             } catch (Exception $e) {
                 jsonResponse(false, 'Error updating user.', null, ['error' => $e->getMessage()]);
             }
-            break;            
+            break;
         case 'check_user_data':
             $userId = $data['user_id'] ?? null;
             if (!$userId) {
@@ -273,7 +419,7 @@ try {
             $user = $userHandler->getUserById($userId);
             if ($user) {
                 if (is_array($user) && isset($user[0])) {
-                    $user = $user[0]; 
+                    $user = $user[0];
                 }
                 jsonResponse(true, 'User data retrieved successfully.', ['items' => (array) $user->items]);
             } else {
@@ -312,16 +458,20 @@ try {
             jsonResponse($result['success'], $result['message']);
             break;
         case 'create_company':
+        case 'create_user_company':
         case 'get_user_companies':
         case 'get_companies':
         case 'update_company':
         case 'delete_company':
             require_once __DIR__ . '/../lib/handlers/CompanyHandler.php';
             $companyHandler = new CompanyHandler();
-
+        
             switch ($endpoint) {
                 case 'create_company':
                     $response = $companyHandler->createCompany($data);
+                    break;
+                case 'create_user_company':
+                    $response = $companyHandler->createUserCompany($data);
                     break;
                 case 'get_user_companies':
                     $response = $companyHandler->getUserCompanies($data);
@@ -335,10 +485,23 @@ try {
                 case 'delete_company':
                     $response = $companyHandler->deleteCompany($data);
                     break;
+                default:
+                    jsonResponse(false, 'Invalid endpoint.', [], [], 400);
+                    return;
             }
 
-            jsonResponse($response['success'], $response['message'], $response['data'] ?? null, $response['errors'] ?? null);
+            jsonResponse(
+                $response['success'] ?? false,
+                $response['message'] ?? '',
+                (isset($response['data']) && is_array($response['data'])) ? $response['data'] : [],
+                (isset($response['errors']) && is_array($response['errors'])) ? $response['errors'] : null,
+                $response['statusCode'] ?? 200,
+                $response['showMessage'] ?? true
+            );
+            
             break;
+                
+                
         default:
             jsonResponse(false, 'Invalid endpoint.');
     }

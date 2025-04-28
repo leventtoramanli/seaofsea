@@ -45,6 +45,32 @@ class ImageUploadHandler
 
         return $fileName;
     }
+    public function handleUploadWithPrefix($file, $userId, $prefix, $meta = [], $maxSize = 1920): string {
+        if (!$userId) {
+            throw new Exception('User ID is required.');
+        }
+    
+        if (!$file) {
+            throw new Exception('No file provided.');
+        }
+    
+        $this->validateImage($file);
+    
+        $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
+        $fileName = $prefix . '_' . $userId . '_' . time() . '.' . strtolower($extension);
+    
+        $filePath = $this->uploadDir . DIRECTORY_SEPARATOR . $fileName;
+    
+        if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+            throw new Exception("Failed to upload the file.");
+        }
+    
+        $this->writeExifData($filePath, $meta);
+        $this->resizeImage($filePath, $maxSize);
+    
+        return $fileName;
+    }
+    
     private function deleteOldImage($userId): void
     {
         if (empty($userId)) {
