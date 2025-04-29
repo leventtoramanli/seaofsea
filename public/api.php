@@ -305,8 +305,7 @@ try {
                 $prefix = $data['prefix'] ?? $_POST['prefix'] ?? 'file';
                 $maxSize = $data['max_size'] ?? $_POST['max_size'] ?? 1920;
                 $meta = $data['meta'] ?? [];
-        
-                // 🔥 Thumb seçenekleri
+
                 $thumb = isset($data['thumb']) ? filter_var($data['thumb'], FILTER_VALIDATE_BOOLEAN) : (isset($_POST['thumb']) ? filter_var($_POST['thumb'], FILTER_VALIDATE_BOOLEAN) : true);
                 $thumbSize = isset($data['thumbSize']) ? (int)$data['thumbSize'] : (isset($_POST['thumbSize']) ? (int)$_POST['thumbSize'] : 128);
         
@@ -460,8 +459,11 @@ try {
         case 'create_company':
         case 'create_user_company':
         case 'get_user_companies':
+        case 'get_user_company_role':
         case 'get_companies':
         case 'update_company':
+        case 'get_company_employees':
+        case 'get_company_followers':
         case 'delete_company':
             require_once __DIR__ . '/../lib/handlers/CompanyHandler.php';
             $companyHandler = new CompanyHandler();
@@ -484,6 +486,15 @@ try {
                     break;
                 case 'delete_company':
                     $response = $companyHandler->deleteCompany($data);
+                    break;
+                case 'get_user_company_role':
+                    $response = $companyHandler->getUserCompanyRole($data);
+                    break;
+                case 'get_company_followers':
+                    $response = $companyHandler->getCompanyFollowers($data);
+                    break;
+                case 'get_company_employees':
+                    $response = $companyHandler->getCompanyEmployees($data);
                     break;
                 default:
                     jsonResponse(false, 'Invalid endpoint.', [], [], 400);

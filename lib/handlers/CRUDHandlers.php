@@ -65,7 +65,7 @@ class CRUDHandler {
             if (!empty($pagination)) {
                 $query->limit($pagination['limit'])->offset($pagination['offset']);
             }
-
+            self::$logger->error("Hepsi.", ['method' => $query]);
             if ($fetchAll) {
                 $result = $query->get();
                 return $asArray ? $result->map(fn($r) => (array)$r)->toArray() : $result;
@@ -169,16 +169,26 @@ class CRUDHandler {
 
     private function applyCondition($query, string $key, $value): void {
         if (is_array($value)) {
-            // Eğer value bir dizi ise, WHERE IN kullanılır
-            $query->whereIn($key, $value);
+            $operator = strtoupper($value[0]);
+            $operand = $value[1];
+    
+            if (in_array($operator, ['LIKE', 'NOT LIKE'])) {
+                $query->where($key, $operator, $operand);
+            } elseif ($operator === 'IN') {
+                $query->whereIn($key, (array) $operand);
+            } elseif ($operator === 'NOT IN') {
+                $query->whereNotIn($key, (array) $operand);
+            } else {
+                // Herhangi başka bir operatör ise (=, !=, <, > gibi)
+                $query->where($key, $operator, $operand);
+            }
         } elseif (is_null($value)) {
-            // Eğer value null ise, IS NULL kullanılır
             $query->whereNull($key);
         } else {
-            // Standart eşleştirme için WHERE kullanılır
             $query->where($key, '=', $value);
         }
     }
+    
     // Apply Condition Helper
     /*private function applyCondition($query, string $key, $value): void {
         if (is_array($value)) {

@@ -135,7 +135,7 @@ class CompanyHandler {
         ]];
     
         $conditions = ['company_users.user_id' => $userId];
-        $columns = ['companies.id', 'companies.name', 'companies.created_at', 'companies.logo'];
+        $columns = ['companies.id', 'companies.name', 'companies.created_at', 'companies.logo', 'company_users.role'];
     
         $companies = $this->crudHandler->read('company_users', $conditions, $columns, true, $joins);
     
@@ -146,37 +146,128 @@ class CompanyHandler {
             'message' => 'Companies fetched successfully.',
             'data' => $data,
         ];
-    }    
+    }
+
+    public function getCompanyEmployees(array $data): array {
+        $companyId = $data['company_id'] ?? null;
+        if (!$companyId) {
+            return ['success' => false, 'message' => 'Company ID is required.'];
+        }
+    
+        $joins = [[
+            'table' => 'users',
+            'on1' => 'company_users.user_id',
+            'operator' => '=',
+            'on2' => 'users.id'
+        ]];
+    
+        $conditions = ['company_users.company_id' => $companyId];
+        $columns = ['users.id', 'users.name', 'users.surname', 'users.email', 'users.user_image', 'company_users.role', 'company_users.rank'];
+    
+        $employees = $this->crudHandler->read('company_users', $conditions, $columns, true, $joins);
+    
+        $data = $employees instanceof \Illuminate\Support\Collection ? $employees->toArray() : (array) $employees;
+    
+        return [
+            'success' => true,
+            'message' => 'Company employees fetched successfully.',
+            'data' => $data,
+        ];
+    }
+    
+
+    public function getUserCompanyRole($params) {
+        $userId = getUserIdFromToken();
+        $companyId = $params['company_id'];
+    
+        getLogger()->error('Company ID: ' . $companyId . ', User ID: ' . $userId);
+    
+        // company_users tablosunda ara
+        $matchUser = $this->crudHandler->read('company_users', [
+            'company_id' => $companyId,
+            'user_id' => $userId,
+        ], ['role'], true);
+        
+        if (!empty($matchUser)) {
+            $role = $matchUser->first()?->role ?? null;
+            if ($role) {
+                return jsonResponse(true, 'Role found.', ['role' => $role]);
+            }
+        }        
+    
+        // company_followers tablosunda ara
+        $matchFollower = $this->crudHandler->read('company_followers', [
+            'company_id' => $companyId,
+            'user_id' => $userId,
+        ], ['user_id'], true);
+        
+        if (!empty($matchFollower)) {
+            return jsonResponse(true, 'Role found.', ['role' => 'follower']);
+        }
+        
+    
+        return jsonResponse(true, 'No relation.', ['role' => 'none']);
+    }
+
+    public function getCompanyFollowers(array $data): array {
+        $companyId = $data['company_id'] ?? null;
+        if (!$companyId) {
+            return ['success' => false, 'message' => 'Company ID is required.'];
+        }
+    
+        $joins = [[
+            'table' => 'users',
+            'on1' => 'company_followers.user_id',
+            'operator' => '=',
+            'on2' => 'users.id'
+        ]];
+    
+        $conditions = ['company_followers.company_id' => $companyId];
+        $columns = ['users.id', 'users.name', 'users.email'];
+    
+        $followers = $this->crudHandler->read('company_followers', $conditions, $columns, true, $joins);
+        $data = $followers instanceof \Illuminate\Support\Collection ? $followers->toArray() : (array) $followers;
+    
+        return [
+            'success' => true,
+            'message' => 'Followers fetched successfully.',
+            'data' => $data,
+        ];
+    }
+    
 
     public function getAllCompanies(array $data): array {
-        $page = (int) ($_GET['page'] ?? 1);
-        $limit = (int) ($_GET['limit'] ?? 25);
+        $page = (int) ($data['page'] ?? 1);
+        $limit = (int) ($data['limit'] ?? 25);
         $offset = ($page - 1) * $limit;
-        $search = $_GET['search'] ?? '';
-        $orderBy = $_GET['orderBy'] ?? 'created_at';
-        $orderDirection = strtoupper($_GET['orderDirection'] ?? 'DESC');
+        $search = $data['search'] ?? '';
+        $orderBy = $data['orderBy'] ?? 'created_at';
+        $orderDirection = strtoupper($data['orderDirection'] ?? 'DESC');
         
         if (!in_array($orderDirection, ['ASC', 'DESC'])) {
-            $orderDirection = 'DESC'; // Güvenlik: sadece ASC veya DESC olsun
+            $orderDirection = 'DESC';
         }
     
         $conditions = [];
         if (!empty($search)) {
             $conditions = [
-                ['name', 'LIKE', "%$search%"]
+                'name' => ['LIKE', '%' . $search . '%']
             ];
         }
     
         $companies = $this->crudHandler->read(
             'companies',
             $conditions,
-            ['id', 'name', 'logo', 'created_at'],
+            ['*'],
             true,
             [],
             ['limit' => $limit, 'offset' => $offset],
             ['orderBy' => [$orderBy => $orderDirection]],
             true
         );
+        if (!$companies || !is_array($companies)) {
+            $companies = [];
+        }
     
         $total = $this->crudHandler->count('companies');
     
