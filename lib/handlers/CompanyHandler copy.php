@@ -23,7 +23,7 @@ class CompanyHandler {
             self::$loggerInfo = getLoggerInfo(); // Merkezi logger
         }
     }
-    private function buildResponse(bool $success, string $message, array $data = [], bool $showMessage = false, array $errors = []): array {
+    private function buildResponse(bool $success, string $message, array $data = [], bool $showMessage = true, array $errors = []): array {
         return [
             'success' => $success,
             'message' => $message,
@@ -45,17 +45,20 @@ class CompanyHandler {
         $userId = $this->userId;
 
         if (!$userId || empty($data['name'])) {
-            return $this->buildResponse(false, 'Company name is required.');
+            $response['message'] = 'Company name is required.';
+            return $response;
         }
 
         if (!filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
-            return $this->buildResponse(false, 'Invalid email address.');
+            $response['message'] = 'Invalid email address.';
+            return $response;
         }
 
         $existing = $this->crudHandler->read('companies', ['email' => $data['email']], ['id'], false);
 
         if (!empty($existing)) {
-            return $this->buildResponse(false, 'A company with this email already exists.');
+            $response['message'] = 'A company with this email already exists.';
+            return $response;
         }
 
         $companyId = $this->crudHandler->create('companies', [
@@ -67,20 +70,34 @@ class CompanyHandler {
         ]);
 
         if ($companyId) {
-            return $this->buildResponse(true, 'Company created successfully.', ['company_id' => (int)$companyId]);
+            $response['success'] = true;
+            $response['message'] = 'Company created successfully.';
+            $response['data'] = ['company_id' => (int) $companyId];
+            $response['showMessage'] = true;
+        } else {
+            $response['showMessage'] =  true;
         }
-        return $this->buildResponse(false, 'Failed to create company.');
+
+        return $response;
     }
 
       
     
     public function createUserCompany(array $data): array
     {
+        $response = [
+            'success' => false,
+            'message' => '',
+            'data' => [],
+            'errors' => [],
+            'showMessage' => true
+        ];
 
         $userId = $this->userId;
 
         if (!$userId || empty($data['company_id']) || empty($data['role']) || empty($data['rank'])) {
-            return $this->buildResponse(false, 'Company ID, role and rank are required.');
+            $response['message'] = 'Company ID, role and rank are required.';
+            return $response;
         }
 
         $existing = $this->crudHandler->read('company_users', [
@@ -89,8 +106,9 @@ class CompanyHandler {
         ], ['id'], false);
 
         if (!empty($existing)) {
-            return $this->buildResponse(false, 'You are already a member of this company.');
-        }             
+            $response['message'] = 'You are already a member of this company.';
+            return $response;
+        }
 
         $insert = $this->crudHandler->create('company_users', [
             'user_id' => $userId,
@@ -102,10 +120,17 @@ class CompanyHandler {
         ]);
 
         if ($insert) {
-            return $this->buildResponse(true, 'User added to company successfully.', ['company_user_id' => (int)$insert], false);
+            $response['success'] = true;
+            $response['message'] = 'User added to company successfully.';
+            $response['data'] = ['company_user_id' => (int)$insert];
+            $response['showMessage'] = false;
+        } else {
+            $response['message'] = 'Failed to add user to company.';
         }
-        return $this->buildResponse(false, 'Failed to add user to company.');
+
+        return $response;
     }
+
 
     public function getUserCompanies(array $data): array {
         $userId = $this->userId;
@@ -127,13 +152,17 @@ class CompanyHandler {
     
         $data = $companies instanceof \Illuminate\Support\Collection ? $companies->toArray() : (array) $companies;
     
-        return $this->buildResponse(true, 'Companies fetched successfully.', $data);
+        return [
+            'success' => true,
+            'message' => 'Companies fetched successfully.',
+            'data' => $data,
+        ];
     }
 
     public function getCompanyEmployees(array $data): array {
         $companyId = $data['company_id'] ?? null;
         if (!$companyId) {
-            return $this->buildResponse(false, 'Company ID is required.');
+            return ['success' => false, 'message' => 'Company ID is required.'];
         }
     
         $joins = [[
@@ -150,8 +179,13 @@ class CompanyHandler {
     
         $data = $employees instanceof \Illuminate\Support\Collection ? $employees->toArray() : (array) $employees;
     
-        return $this->buildResponse(true, 'Company employees fetched successfully.', $data);
+        return [
+            'success' => true,
+            'message' => 'Company employees fetched successfully.',
+            'data' => $data,
+        ];
     }
+    
 
     public function getUserCompanyRole($params) {
         $userId = $this->userId;
@@ -168,9 +202,10 @@ class CompanyHandler {
         if (!empty($matchUser)) {
             $role = $matchUser->first()?->role ?? null;
             if ($role) {
-                return jsonResponse(true, 'Role found.', ['role' => $role], [], 200, false);
+                return jsonResponse(true, 'Role found.', ['role' => $role]);
             }
-        }
+        }        
+    
         // company_followers tablosunda ara
         $matchFollower = $this->crudHandler->read('company_followers', [
             'company_id' => $companyId,
@@ -180,13 +215,15 @@ class CompanyHandler {
         if (!empty($matchFollower)) {
             return jsonResponse(true, 'Role found.', ['role' => 'follower']);
         }
+        
+    
         return jsonResponse(true, 'No relation.', ['role' => 'none']);
     }
 
     public function getCompanyFollowers(array $data): array {
         $companyId = $data['company_id'] ?? null;
         if (!$companyId) {
-            return $this->buildResponse(false, 'Company ID is required.');
+            return ['success' => false, 'message' => 'Company ID is required.'];
         }
     
         $joins = [[
@@ -202,7 +239,11 @@ class CompanyHandler {
         $followers = $this->crudHandler->read('company_followers', $conditions, $columns, true, $joins);
         $data = $followers instanceof \Illuminate\Support\Collection ? $followers->toArray() : (array) $followers;
     
-        return $this->buildResponse(true, 'Followers fetched successfully.', $data);
+        return [
+            'success' => true,
+            'message' => 'Followers fetched successfully.',
+            'data' => $data,
+        ];
     }
     
 
@@ -241,22 +282,35 @@ class CompanyHandler {
     
         $total = $this->crudHandler->count('companies');
     
-        return $this->buildResponse(true, 'Companies retrieved successfully.', [
-            'items' => $companies,
-            'pagination' => [
-                'total' => $total,
-                'page' => $page,
-                'limit' => $limit
+        return [
+            'success' => true,
+            'message' => 'Companies retrieved successfully.',
+            'data' => [
+                'items' => $companies,
+                'pagination' => [
+                    'total' => $total,
+                    'page' => $page,
+                    'limit' => $limit
+                ]
             ]
-        ]);        
+        ];
     }    
 
     public function updateCompany(array $data): array {
+        $response = [
+            'success' => false,
+            'message' => '',
+            'data' => [],
+            'errors' => [],
+            'showMessage' => true
+        ];
+    
         $companyId = $data['company_id'] ?? null;
         $userId = $this->userId;
     
         if (!$companyId) {
-            return $this->buildResponse(false, 'Company ID is required.');
+            $response['message'] = 'Company ID is required.';
+            return $response;
         }
     
         // Admin kontrolü
@@ -267,7 +321,8 @@ class CompanyHandler {
         ], ['id'], false);
     
         if (!$relation) {
-            return $this->buildResponse(false, 'Unauthorized.');
+            $response['message'] = 'Unauthorized.';
+            return $response;
         }
     
         // Güncellenecek veriyi hazırla
@@ -275,16 +330,22 @@ class CompanyHandler {
         unset($updateData['company_id'], $updateData['user_id']); // Bunlar update edilmeyecek
     
         if (empty($updateData)) {
-            return $this->buildResponse(false, 'No data provided to update.');
+            $response['message'] = 'No data provided to update.';
+            return $response;
         }
     
         $updated = $this->crudHandler->update('companies', $updateData, ['id' => $companyId]);
     
         if ($updated) {
-            return $this->buildResponse(true, 'Company updated successfully.', ['updated' => $updated], false);
+            $response['success'] = true;
+            $response['message'] = 'Company updated successfully.';
+            $response['data'] = ['updated' => $updated];
+            $response['showMessage'] = false;
+        } else {
+            $response['message'] = 'Failed to update company.';
         }
-        
-        return $this->buildResponse(false, 'Failed to update company.');
+    
+        return $response;
     }
     
 
@@ -293,7 +354,7 @@ class CompanyHandler {
         $userId = $this->userId;
 
         if (!$companyId) {
-            return $this->buildResponse(false, 'Company ID is required.');
+            return ['success' => false, 'message' => 'Company ID is required.'];
         }
 
         $relation = $this->crudHandler->read('company_users', [
@@ -303,10 +364,10 @@ class CompanyHandler {
         ], ['id'], false);
 
         if (!$relation) {
-            return $this->buildResponse(false, 'Unauthorized.');
-        }        
+            return ['success' => false, 'message' => 'Unauthorized.'];
+        }
 
         $deleted = $this->crudHandler->delete('companies', ['id' => $companyId]);
-        return $this->buildResponse(true, 'Company deleted.', ['deleted' => $deleted]);
+        return ['success' => true, 'message' => 'Company deleted.', 'data' => ['deleted' => $deleted]];
     }
 }
