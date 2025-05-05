@@ -225,10 +225,13 @@ class CompanyHandler {
         ], ['id'], false);
         if (!$relation) {
             return $this->buildResponse(false, 'Unauthorized.');
-        }
+        }        
         // Güncellenecek veriyi hazırla
         $updateData = $data;
         unset($updateData['company_id'], $updateData['user_id']);
+        if (isset($updateData['contact_info']) && is_array($updateData['contact_info'])) {
+            $updateData['contact_info'] = json_encode($updateData['contact_info'], JSON_UNESCAPED_UNICODE);
+        }
         if (empty($updateData)) {
             return $this->buildResponse(false, 'No data provided to update.');
         }

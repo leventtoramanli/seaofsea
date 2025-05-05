@@ -265,6 +265,10 @@ class CompanyHandler {
                 'name' => ['LIKE', '%' . $search . '%']
             ];
         }
+
+        if (!empty($row['contact_info'])) {
+            $row['contact_info'] = json_decode($row['contact_info'], true);
+        }        
     
         $companies = $this->crudHandler->read(
             'companies',
@@ -312,6 +316,10 @@ class CompanyHandler {
             $response['message'] = 'Company ID is required.';
             return $response;
         }
+
+        if (!empty($data['contact_info']) && is_array($data['contact_info'])) {
+            $updateData['contact_info'] = json_encode($data['contact_info'], JSON_UNESCAPED_UNICODE);
+        }        
     
         // Admin kontrolü
         $relation = $this->crudHandler->read('company_users', [
@@ -366,7 +374,6 @@ class CompanyHandler {
         if (!$relation) {
             return ['success' => false, 'message' => 'Unauthorized.'];
         }
-
         $deleted = $this->crudHandler->delete('companies', ['id' => $companyId]);
         return ['success' => true, 'message' => 'Company deleted.', 'data' => ['deleted' => $deleted]];
     }

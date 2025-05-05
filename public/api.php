@@ -64,22 +64,6 @@ function jsonResponse($success, $message, $data = null, $errors = null, $code = 
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit();
 }
-/*
-function jsonResponse($success, $message, $data = [], $errors = [], $code = 200, $showMessage = true) {
-    http_response_code($code);
-    header('Content-Type: application/json');
-
-    $response = [
-        'success' => $success,
-        'message' => $message,
-        'data' => is_array($data) ? $data : [],
-        'errors' => is_array($errors) ? $errors : [],
-        'showMessage' => $showMessage
-    ];
-
-    echo json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit();
-}*/
 
 try {
     $loggerInfo = getLoggerInfo(); // Merkezi logger
