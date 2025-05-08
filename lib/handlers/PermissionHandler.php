@@ -1,11 +1,12 @@
 <?php
 require_once __DIR__ . '/../handlers/UserHandler.php';
 require_once __DIR__ . '/../handlers/CRUDHandlers.php';
-require_once __DIR__ . '/../helpers/PermissionHelper.php';
+require_once __DIR__ . '/../handlers/PermissionHelper.php';
 
 class PermissionHandler {
     private $crudHandler;
     private $userId;
+    private $userRoleId;
 
     public function __construct() {
         $this->crudHandler = new CRUDHandler();
@@ -15,6 +16,11 @@ class PermissionHandler {
             jsonResponse(false, 'Unauthorized');
         }
         $this->userId = $userId;
+        $user = $this->crudHandler->read('users', ['id' => $userId], ['role_id'], false);
+        if (is_object($user)) {
+            $user = (array) $user;
+        }        
+        $this->userRoleId = $user['role_id'] ?? null;
     }
 
     public function checkPermission(string $permissionCode, ?int $entityId = null, string $entityType = 'company'): bool {
@@ -29,6 +35,7 @@ class PermissionHandler {
         if ($entityId !== null) {
             $userCond[] = [$entityType . '_id', '=', $entityId];
         }
+        if ($this->userRoleId == 1) {return true;}
 
         $userPerm = $this->crudHandler->read('user_permissions', $userCond, ['id'], false);
         if ($userPerm) return true;
@@ -84,31 +91,40 @@ class PermissionHandler {
 
     public function getAllUserPermissions(?int $entityId = null, string $entityType = 'company'): array {
         $userId = $this->userId;
+    
+        // ✅ Admin'e tüm izinleri ver
+        if ($this->userRoleId == 1) {
+            $all = $this->crudHandler->read('permissions', [], ['code'], true);
+            $allArray = json_decode(json_encode($all), true);
+            if (!is_array($allArray)) return [];
+            return array_map(fn($item) => $item['code'], $allArray);
+        }
+    
         $permissions = [];
-
-        // 1. user_permissions
+    
+        // user_permissions
         $userPerms = $this->crudHandler->read('user_permissions', [
             'user_id' => $userId,
             [$entityType . '_id', '=', $entityId ?? 0],
             ['expires_at', 'IS', null]
         ], ['permission_code'], true);
-
+    
         foreach ($userPerms as $p) {
             $permissions[] = $p['permission_code'];
         }
-
-        // 2. role_permissions
+    
+        // role_permissions
         $role = $this->getUserEntityRole($entityId, $entityType);
         if ($role) {
             $rolePerms = $this->crudHandler->read('role_permissions', [
                 'role' => $role
             ], ['permission_code'], true);
-
+    
             foreach ($rolePerms as $p) {
                 $permissions[] = $p['permission_code'];
             }
         }
-
+    
         return array_values(array_unique($permissions));
-    }
+    }    
 }

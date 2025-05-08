@@ -80,6 +80,38 @@ try {
     }
     // Endpoint yönlendirmesi
     switch ($endpoint) {
+        case 'get_user_permissions':
+            require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
+            try {
+                $handler = new PermissionHandler();
+                $companyId = $data['company_id'] ?? null;
+        
+                $permissions = $handler->getAllUserPermissions($companyId);
+                jsonResponse(true, 'Permissions retrieved.', ['permissions' => $permissions]);
+            } catch (Exception $e) {
+                $logger->error("❌ get_user_permissions error: " . $e->getMessage());
+                jsonResponse(false, 'An error occurred. Please try again later.');
+            }
+            break;
+        case 'check_permission':
+            require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
+            $handler = new PermissionHandler();
+        
+            $permissionCode = $data['permission_code'] ?? null;
+            $entityType = $data['entity_type'] ?? 'company';
+            $entityId = $data['entity_id'] ?? null;
+        
+            if (!$permissionCode || !$entityId) {
+                jsonResponse(false, 'Permission code and entity ID are required.');
+            }
+        
+            try {
+                $has = $handler->checkPermission($permissionCode, $entityId, $entityType);
+                jsonResponse($has, $has ? 'Permission granted.' : 'Permission denied.');
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error checking permission.', null, ['error' => $e->getMessage()]);
+            }
+            break;
         case 'get_user_info':
             try {
                 $userId = getUserIdFromToken();
