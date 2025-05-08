@@ -11,7 +11,7 @@ class CompanyHandler {
     private $userId;
     public function __construct() {
         $this->crudHandler = new CRUDHandler();
-        $this->userId = getUserIdFromToken();
+        $this->userId = UserHandler::getUserIdFromToken();
         if (!self::$logger) {
             self::$logger = getLogger(); // Merkezi logger
         }
@@ -211,12 +211,29 @@ class CompanyHandler {
             ]
         ]);        
     }
-    public function updateCompany(array $data): array {
+    
+    public function getCompanyDetail(array $data): array {
         $companyId = $data['company_id'] ?? null;
-        $userId = $this->userId;
         if (!$companyId) {
             return $this->buildResponse(false, 'Company ID is required.');
         }
+        if (!empty($company['company_type_ids'])) {
+            $company['company_type_ids'] = json_decode($company['company_type_ids'], true);
+        }        
+        $company = (array) $this->crudHandler->read('companies', ['id' => $companyId], ['*'], false);
+        if (!$company) {
+            return $this->buildResponse(false, 'Company not found.');
+        }
+        return $this->buildResponse(true, 'Company detail retrieved successfully.', $company);
+    }   
+    public function updateCompany(array $data): array {
+        $companyId = $data['company_id'] ?? null;
+        $userId = $this->userId;
+    
+        if (!$companyId) {
+            return $this->buildResponse(false, 'Company ID is required.');
+        }
+    
         // Admin kontrolü
         $relation = $this->crudHandler->read('company_users', [
             'company_id' => $companyId,
@@ -225,22 +242,68 @@ class CompanyHandler {
         ], ['id'], false);
         if (!$relation) {
             return $this->buildResponse(false, 'Unauthorized.');
-        }        
+        }
+    
         // Güncellenecek veriyi hazırla
         $updateData = $data;
         unset($updateData['company_id'], $updateData['user_id']);
+    
         if (isset($updateData['contact_info']) && is_array($updateData['contact_info'])) {
             $updateData['contact_info'] = json_encode($updateData['contact_info'], JSON_UNESCAPED_UNICODE);
         }
+    
+        if (isset($data['company_type_ids'])) {
+            $companyTypeIds = $data['company_type_ids'];
+            
+            if (!is_array($companyTypeIds)) {
+                return $this->buildResponse(false, 'Invalid company_type_ids format', [], true);
+            }
+        
+            $updateData['company_type_ids'] = !empty($companyTypeIds)
+                ? json_encode($companyTypeIds)
+                : null;
+        }
+    
         if (empty($updateData)) {
             return $this->buildResponse(false, 'No data provided to update.');
         }
+    
         $updated = $this->crudHandler->update('companies', $updateData, ['id' => $companyId]);
+    
         if ($updated) {
             return $this->buildResponse(true, 'Company updated successfully.', ['updated' => $updated], false);
         }
         return $this->buildResponse(false, 'Failed to update company.');
     }
+    public function getCompanyTypes(array $data): array {
+        try {
+            $conditions = [];
+    
+            // Eğer sadece belirli ID'ler isteniyorsa (örneğin sayfada yalnızca gösterim için)
+            if (!empty($data['filter_ids']) && is_array($data['filter_ids'])) {
+                $conditions[] = [
+                    'column' => 'id',
+                    'operator' => 'IN',
+                    'value' => $data['filter_ids'],
+                ];
+            }
+    
+            $types = $this->crudHandler->read(
+                'company_types',
+                $conditions,
+                ['id', 'name', 'description'],
+                true
+            );
+    
+            if (empty($types)) {
+                return $this->buildResponse(false, 'No company types found.', []);
+            }
+    
+            return $this->buildResponse(true, 'Company types retrieved successfully.', $types->toArray());
+        } catch (Exception $e) {
+            return $this->buildResponse(false, 'Error fetching company types.', [], true, ['exception' => $e->getMessage()]);
+        }
+    }       
     public function deleteCompany(array $data): array {
         $companyId = $data['company_id'] ?? null;
         $userId = $this->userId;

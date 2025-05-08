@@ -448,6 +448,8 @@ try {
         case 'update_company':
         case 'get_company_employees':
         case 'get_company_followers':
+        case 'get_company_detail':
+        case 'get_company_types':
         case 'delete_company':
             require_once __DIR__ . '/../lib/handlers/CompanyHandler.php';
             $companyHandler = new CompanyHandler();
@@ -480,6 +482,15 @@ try {
                 case 'get_company_employees':
                     $response = $companyHandler->getCompanyEmployees($data);
                     break;
+                case 'get_company_detail':
+                    $response = $companyHandler->getCompanyDetail($data);
+                    break;
+                case 'get_company_types':
+                    $response = $companyHandler->getCompanyTypes($data);
+                    break;
+                case 'update_company':
+                    jsonResponseFromArray($companyHandler->updateCompany($data));
+                    break;                   
                 default:
                     jsonResponse(false, 'Invalid endpoint.', [], [], 400);
                     return;
