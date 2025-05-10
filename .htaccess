@@ -1,4 +1,10 @@
 RewriteEngine On
+
+# HTTPS yönlendirmesi
+RewriteCond %{HTTPS} !=on
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Authorization header'ını ilet
 RewriteCond %{HTTP:Authorization} ^(.*)
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
 SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1

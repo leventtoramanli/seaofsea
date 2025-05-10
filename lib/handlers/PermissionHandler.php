@@ -2,7 +2,10 @@
 require_once __DIR__ . '/../handlers/UserHandler.php';
 require_once __DIR__ . '/../handlers/CRUDHandlers.php';
 require_once __DIR__ . '/../handlers/PermissionHelper.php';
-
+use Firebase\JWT\Key;
+use Illuminate\Database\Capsule\Manager as Capsule;
+use Firebase\JWT\JWT;
+use Firebase\JWT\ExpiredException;
 class PermissionHandler {
     private $crudHandler;
     private $userId;
@@ -10,7 +13,7 @@ class PermissionHandler {
 
     public function __construct() {
         $this->crudHandler = new CRUDHandler();
-        $userId = UserHandler::getUserIdFromToken();
+        $userId = getUserIdFromToken();
         if (!$userId) {
             http_response_code(401);
             jsonResponse(false, 'Unauthorized');
@@ -88,6 +91,21 @@ class PermissionHandler {
             return false;
         }
     }
+    public function getAllPermissions(string $scope = 'company'): array {
+        $permissions = $this->crudHandler->read('permissions', [
+            'scope' => $scope
+        ], ['code', 'description'], true);
+    
+        if ($permissions instanceof \Illuminate\Support\Collection) {
+            $permissions = $permissions->toArray();
+        }
+    
+        return array_map(function ($item) {
+            return is_array($item)
+                ? ['code' => $item['code'], 'description' => $item['description'] ?? $item['code']]
+                : ['code' => $item->code, 'description' => $item->description ?? $item->code];
+        }, $permissions);
+    }      
 
     public function getAllUserPermissions(?int $entityId = null, string $entityType = 'company'): array {
         $userId = $this->userId;
@@ -95,36 +113,65 @@ class PermissionHandler {
         // ✅ Admin'e tüm izinleri ver
         if ($this->userRoleId == 1) {
             $all = $this->crudHandler->read('permissions', [], ['code'], true);
-            $allArray = json_decode(json_encode($all), true);
-            if (!is_array($allArray)) return [];
-            return array_map(fn($item) => $item['code'], $allArray);
+    
+            if ($all instanceof \Illuminate\Support\Collection) {
+                $all = $all->toArray();
+            }
+    
+            $all = array_map(function ($item) {
+                return is_array($item) ? $item['code'] : $item->code;
+            }, $all);
+    
+            return $all;
         }
-    
         $permissions = [];
-    
-        // user_permissions
         $userPerms = $this->crudHandler->read('user_permissions', [
             'user_id' => $userId,
             [$entityType . '_id', '=', $entityId ?? 0],
             ['expires_at', 'IS', null]
         ], ['permission_code'], true);
     
-        foreach ($userPerms as $p) {
-            $permissions[] = $p['permission_code'];
+        if ($userPerms instanceof \Illuminate\Support\Collection) {
+            $userPerms = $userPerms->toArray();
         }
     
-        // role_permissions
+        foreach ($userPerms as $p) {
+            $permissions[] = is_array($p) ? $p['permission_code'] : $p->permission_code;
+        }
         $role = $this->getUserEntityRole($entityId, $entityType);
         if ($role) {
             $rolePerms = $this->crudHandler->read('role_permissions', [
                 'role' => $role
             ], ['permission_code'], true);
     
+            if ($rolePerms instanceof \Illuminate\Support\Collection) {
+                $rolePerms = $rolePerms->toArray();
+            }
+    
             foreach ($rolePerms as $p) {
-                $permissions[] = $p['permission_code'];
+                $permissions[] = is_array($p) ? $p['permission_code'] : $p->permission_code;
             }
         }
-    
         return array_values(array_unique($permissions));
+    }    
+    public function updateUserPermissions(int $targetUserId, int $companyId, array $permissionCodes): bool {
+        // Eski izinleri sil
+        $this->crudHandler->delete('user_permissions', [
+            'user_id' => $targetUserId,
+            'company_id' => $companyId
+        ]);
+    
+        // Yeni izinleri ekle
+        foreach ($permissionCodes as $code) {
+            $this->crudHandler->create('user_permissions', [
+                'user_id' => $targetUserId,
+                'company_id' => $companyId,
+                'permission_code' => $code,
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+        }
+    
+        return true;
     }    
 }

@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../handlers/CRUDHandlers.php';
+require_once __DIR__ . '/../handlers/UserHandler.php';
 use Firebase\JWT\Key;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Firebase\JWT\JWT;
@@ -11,7 +12,7 @@ class CompanyHandler {
     private $userId;
     public function __construct() {
         $this->crudHandler = new CRUDHandler();
-        $this->userId = UserHandler::getUserIdFromToken();
+        $this->userId = getUserIdFromToken();
         if (!self::$logger) {
             self::$logger = getLogger(); // Merkezi logger
         }

@@ -496,8 +496,7 @@ class UserHandler
             : ['success' => false, 'message' => 'Update failed.'];
     }
 
-    public function changePassword($data)
-{
+    public function changePassword($data){
     $userId = $this->getUserIdFromToken();
     if (!$userId) {
         return ['success' => false, 'message' => 'Unauthorized.'];

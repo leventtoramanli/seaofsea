@@ -26,6 +26,9 @@ $publicEndpoints = [
 ];
 
 $endpoint = $_GET['endpoint'] ?? null;
+if (!$endpoint) {
+    jsonResponse(false, 'Endpoint is required.');
+}
 $tokenRequired = !in_array($endpoint, $publicEndpoints);
 
 // Eğer token gerekiyorsa ve geçerli değilse, daha başta kes
@@ -38,7 +41,12 @@ if ($tokenRequired) {
         }
 
         $userHandler = new UserHandler();
-        $user = $userHandler->validateToken($token); // Token valid mi kontrol et
+        $user = UserHandler::getUserIdFromToken();
+        if (!$user) {
+            http_response_code(401);
+            jsonResponse(false, 'Invalid or expired token.', [], ['error' => 'Expired or invalid'], 401);
+        }
+        $GLOBALS['current_user_id'] = $user;
         if (!$user) {
             http_response_code(401);
             jsonResponse(false, 'Invalid or expired token.', [], ['error' => 'Expired or invalid'], 401);
@@ -48,8 +56,6 @@ if ($tokenRequired) {
         jsonResponse(false, 'Token validation failed.', [], ['error' => $e->getMessage()], 401);
     }
 }
-
-
 
 // JSON yanıt fonksiyonu
 function jsonResponse($success, $message, $data = null, $errors = null, $code = 200, $showMessage = true) {
@@ -111,6 +117,31 @@ try {
             } catch (Exception $e) {
                 jsonResponse(false, 'Error checking permission.', null, ['error' => $e->getMessage()]);
             }
+            break;
+        case 'update_user_permissions':
+            require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
+            $handler = new PermissionHandler();
+        
+            $targetUserId = $data['user_id'] ?? null;
+            $companyId = $data['company_id'] ?? null;
+            $permissions = $data['permission_codes'] ?? [];
+        
+            if (!$targetUserId || !$companyId || !is_array($permissions)) {
+                jsonResponse(false, 'Missing required parameters.');
+            }
+        
+            try {
+                $handler->updateUserPermissions($targetUserId, $companyId, $permissions);
+                jsonResponse(true, 'User permissions updated successfully.');
+            } catch (Exception $e) {
+                jsonResponse(false, 'Error updating permissions.', null, ['error' => $e->getMessage()]);
+            }
+            break;
+        case 'get_all_permissions':
+            require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
+            $handler = new PermissionHandler();
+            $all = $handler->getAllPermissions();
+            jsonResponse(true, 'All permissions retrieved.', ['permissions' => $all]);
             break;
         case 'get_user_info':
             try {
