@@ -15,6 +15,7 @@ require_once __DIR__ . '/../lib/handlers/UserHandler.php';
 require_once __DIR__ . '/../lib/handlers/PasswordResetHandler.php';
 require_once __DIR__ . '/../lib/handlers/CRUDHandlers.php';
 require_once __DIR__ . '/../lib/handlers/ImageUploadHandler.php';
+require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
 
 $publicEndpoints = [
     'login',
@@ -70,6 +71,16 @@ function jsonResponse($success, $message, $data = null, $errors = null, $code = 
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit();
 }
+function jsonResponseFromArray(array $response): void {
+    jsonResponse(
+        $response['success'] ?? false,
+        $response['message'] ?? '',
+        $response['data'] ?? [],
+        $response['errors'] ?? null,
+        $response['statusCode'] ?? 200,
+        $response['showMessage'] ?? true
+    );
+}
 
 try {
     $loggerInfo = getLoggerInfo(); // Merkezi logger
@@ -77,6 +88,10 @@ try {
     // Gelen isteği ve endpoint'i al
     $db = new DatabaseHandler();
     $userHandler = new UserHandler();
+    $pHandler = null;
+    if ($tokenRequired) {
+        $pHandler = new PermissionHandler();
+    }
     $data = json_decode(file_get_contents('php://input'), true);
     $endpoint = $_GET['endpoint'] ?? null;
 
@@ -86,62 +101,36 @@ try {
     }
     // Endpoint yönlendirmesi
     switch ($endpoint) {
-        case 'get_user_permissions':
-            require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
-            try {
-                $handler = new PermissionHandler();
-                $companyId = $data['company_id'] ?? null;
-        
-                $permissions = $handler->getAllUserPermissions($companyId);
-                jsonResponse(true, 'Permissions retrieved.', ['permissions' => $permissions]);
-            } catch (Exception $e) {
-                $logger->error("❌ get_user_permissions error: " . $e->getMessage());
-                jsonResponse(false, 'An error occurred. Please try again later.');
-            }
+        case 'list_role_permissions':
+            jsonResponseFromArray($pHandler->listRolePermissions($data['role'] ?? null));
             break;
+        case 'assign_role_permission':
+            jsonResponseFromArray($pHandler->assignRolePermission($data['role'] ?? null,$data['permission_code'] ?? null));
+            break;
+        case 'get_permission_details':
+            jsonResponseFromArray($pHandler->getPermissionDetails($data['code'] ?? null));
+            break;
+        case 'remove_user_permission':
+            jsonResponseFromArray($pHandler->removeUserPermission($data['user_id'] ?? 0,$data['permission_code'] ?? null,$data['company_id'] ?? null));
+            break;
+        case 'get_user_permissions':
+            jsonResponseFromArray($pHandler->getAllUserPermissions($data['entity_id'] ?? null,$data['entity_type'] ?? 'company'));
+            break;        
         case 'check_permission':
-            require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
-            $handler = new PermissionHandler();
-        
             $permissionCode = $data['permission_code'] ?? null;
             $entityType = $data['entity_type'] ?? 'company';
             $entityId = $data['entity_id'] ?? null;
-        
-            if (!$permissionCode || !$entityId) {
-                jsonResponse(false, 'Permission code and entity ID are required.');
-            }
-        
-            try {
-                $has = $handler->checkPermission($permissionCode, $entityId, $entityType);
-                jsonResponse($has, $has ? 'Permission granted.' : 'Permission denied.');
-            } catch (Exception $e) {
-                jsonResponse(false, 'Error checking permission.', null, ['error' => $e->getMessage()]);
-            }
+            if (!$permissionCode || !$entityId) { jsonResponse(false, 'Permission code and entity ID are required.');}
+            jsonResponseFromArray($pHandler->checkPermission($permissionCode, $entityId, $entityType));
+            break;
+        case 'assign_user_permission':
+            jsonResponseFromArray($pHandler->assignUserPermission($data));
             break;
         case 'update_user_permissions':
-            require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
-            $handler = new PermissionHandler();
-        
-            $targetUserId = $data['user_id'] ?? null;
-            $companyId = $data['company_id'] ?? null;
-            $permissions = $data['permission_codes'] ?? [];
-        
-            if (!$targetUserId || !$companyId || !is_array($permissions)) {
-                jsonResponse(false, 'Missing required parameters.');
-            }
-        
-            try {
-                $handler->updateUserPermissions($targetUserId, $companyId, $permissions);
-                jsonResponse(true, 'User permissions updated successfully.');
-            } catch (Exception $e) {
-                jsonResponse(false, 'Error updating permissions.', null, ['error' => $e->getMessage()]);
-            }
-            break;
+            jsonResponseFromArray($pHandler->updateUserPermissions($data['user_id'] ?? 0,$data['company_id'] ?? 0,$data['permission_codes'] ?? []));
+            break;        
         case 'get_all_permissions':
-            require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
-            $handler = new PermissionHandler();
-            $all = $handler->getAllPermissions();
-            jsonResponse(true, 'All permissions retrieved.', ['permissions' => $all]);
+            jsonResponseFromArray($pHandler->getAllPermissions());
             break;
         case 'get_user_info':
             try {

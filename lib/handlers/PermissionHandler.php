@@ -25,10 +25,16 @@ class PermissionHandler {
         }        
         $this->userRoleId = $user['role_id'] ?? null;
     }
-
-    public function checkPermission(string $permissionCode, ?int $entityId = null, string $entityType = 'company'): bool {
+    public function checkPermission(string $permissionCode, ?int $entityId = null, string $entityType = 'company'): array {
         $userId = $this->userId;
-
+    
+        if ($this->userRoleId == 1) {
+            return [
+                'success' => true,
+                'message' => 'Admin override: permission granted.'
+            ];
+        }
+    
         // 1. Kullanıcıya özel izin (user_permissions)
         $userCond = [
             ['user_id', '=', $userId],
@@ -38,26 +44,35 @@ class PermissionHandler {
         if ($entityId !== null) {
             $userCond[] = [$entityType . '_id', '=', $entityId];
         }
-        if ($this->userRoleId == 1) {return true;}
-
+    
         $userPerm = $this->crudHandler->read('user_permissions', $userCond, ['id'], false);
-        if ($userPerm) return true;
-
-        // 2. Kullanıcının rolü ile gelen izin (role_permissions)
+        if ($userPerm) {
+            return [
+                'success' => true,
+                'message' => 'Permission granted by user-specific permission.'
+            ];
+        }
+    
+        // 2. Rol tabanlı izin (role_permissions)
         $role = $this->getUserEntityRole($entityId, $entityType);
         if ($role) {
             $rolePerm = $this->crudHandler->read('role_permissions', [
                 'role' => $role,
                 'permission_code' => $permissionCode
             ], ['id'], false);
-            if ($rolePerm) return true;
+            if ($rolePerm) {
+                return [
+                    'success' => true,
+                    'message' => 'Permission granted by role.'
+                ];
+            }
         }
-
-        // 3. permission.access_level kontrolü (permissions tablosundan)
+    
+        // 3. Genel erişim düzeyi kontrolü
         $permissionMeta = $this->crudHandler->read('permissions', [
             'code' => $permissionCode
         ], ['access_level'], false);
-
+    
         if (!empty($permissionMeta['access_level'])) {
             $context = [
                 'entity' => $entityType,
@@ -67,12 +82,20 @@ class PermissionHandler {
                 'follower_table' => $entityType . '_followers',
                 'role_column' => 'role'
             ];
-            return PermissionHelper::checkVisibilityScope($permissionMeta['access_level'], $userId, $context);
+            $hasAccess = PermissionHelper::checkVisibilityScope($permissionMeta['access_level'], $userId, $context);
+    
+            return [
+                'success' => $hasAccess,
+                'message' => $hasAccess ? 'Permission granted by access_level.' : 'Permission denied by access_level.'
+            ];
         }
-
-        return false;
+    
+        return [
+            'success' => false,
+            'message' => 'Permission denied: no matching conditions found.',
+            'statusCode' => 403
+        ];
     }
-
     public function getUserEntityRole(?int $entityId, string $entityType): ?string {
         if (!$entityId) return null;
 
@@ -92,86 +115,306 @@ class PermissionHandler {
         }
     }
     public function getAllPermissions(string $scope = 'company'): array {
-        $permissions = $this->crudHandler->read('permissions', [
-            'scope' => $scope
-        ], ['code', 'description'], true);
+        try {
+            $permissions = $this->crudHandler->read('permissions', [
+                'scope' => $scope
+            ], ['code', 'description'], true);
+    
+            if ($permissions instanceof \Illuminate\Support\Collection) {
+                $permissions = $permissions->toArray();
+            }
+    
+            $mapped = array_map(function ($item) {
+                return is_array($item)
+                    ? ['code' => $item['code'], 'description' => $item['description'] ?? $item['code']]
+                    : ['code' => $item->code, 'description' => $item->description ?? $item->code];
+            }, $permissions);
+    
+            return [
+                'success' => true,
+                'message' => 'All permissions retrieved.',
+                'data' => ['permissions' => $mapped]
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Failed to fetch permissions.',
+                'errors' => ['exception' => $e->getMessage()],
+                'statusCode' => 500
+            ];
+        }
+    }
+    public function getAllUserPermissions(?int $entityId = null, string $entityType = 'company'): array {
+        try {
+            $userId = $this->userId;
+    
+            if ($this->userRoleId == 1) {
+                $all = $this->crudHandler->read('permissions', [], ['code'], true);
+                if ($all instanceof \Illuminate\Support\Collection) {
+                    $all = $all->toArray();
+                }
+                $codes = array_map(fn($item) => is_array($item) ? $item['code'] : $item->code, $all);
+                return [
+                    'success' => true,
+                    'message' => 'Admin has all permissions.',
+                    'data' => ['permissions' => $codes]
+                ];
+            }
+    
+            $permissions = [];
+    
+            // Kullanıcıya özel izinler
+            $userPerms = $this->crudHandler->read('user_permissions', [
+                'user_id' => $userId,
+                [$entityType . '_id', '=', $entityId ?? 0],
+                ['expires_at', 'IS', null]
+            ], ['permission_code'], true);
+    
+            if ($userPerms instanceof \Illuminate\Support\Collection) {
+                $userPerms = $userPerms->toArray();
+            }
+    
+            foreach ($userPerms as $p) {
+                $permissions[] = is_array($p) ? $p['permission_code'] : $p->permission_code;
+            }
+    
+            // Rol üzerinden gelen izinler
+            $role = $this->getUserEntityRole($entityId, $entityType);
+            if ($role) {
+                $rolePerms = $this->crudHandler->read('role_permissions', [
+                    'role' => $role
+                ], ['permission_code'], true);
+    
+                if ($rolePerms instanceof \Illuminate\Support\Collection) {
+                    $rolePerms = $rolePerms->toArray();
+                }
+    
+                foreach ($rolePerms as $p) {
+                    $permissions[] = is_array($p) ? $p['permission_code'] : $p->permission_code;
+                }
+            }
+    
+            return [
+                'success' => true,
+                'message' => 'Permissions loaded.',
+                'data' => ['permissions' => array_values(array_unique($permissions))]
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Error retrieving user permissions.',
+                'errors' => ['exception' => $e->getMessage()],
+                'statusCode' => 500
+            ];
+        }
+    }    
+    public function updateUserPermissions(int $targetUserId, int $companyId, array $permissionCodes): array {
+        try {
+            $this->crudHandler->delete('user_permissions', [
+                'user_id' => $targetUserId,
+                'company_id' => $companyId
+            ]);
+    
+            foreach ($permissionCodes as $code) {
+                $this->crudHandler->create('user_permissions', [
+                    'user_id' => $targetUserId,
+                    'company_id' => $companyId,
+                    'permission_code' => $code,
+                    'created_at' => date('Y-m-d H:i:s'),
+                    'updated_at' => date('Y-m-d H:i:s'),
+                ]);
+            }
+    
+            return [
+                'success' => true,
+                'message' => 'User permissions updated successfully.',
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Failed to update user permissions.',
+                'errors' => ['exception' => $e->getMessage()],
+                'statusCode' => 500
+            ];
+        }
+    }
+    public function assignUserPermission(array $data): array {
+        $userId = $data['user_id'] ?? null;
+        $permissionCode = $data['permission_code'] ?? null;
+        $companyId = $data['company_id'] ?? null;
+        $expiresAt = $data['expires_at'] ?? null;
+    
+        if (!$userId || !$permissionCode) {
+            return [
+                'success' => false,
+                'message' => 'User ID and permission code are required.',
+                'statusCode' => 400
+            ];
+        }
+    
+        try {
+            $success = $this->crudHandler->create('user_permissions', [
+                'user_id' => $userId,
+                'permission_code' => $permissionCode,
+                'company_id' => $companyId,
+                'expires_at' => $expiresAt
+            ]);
+    
+            return [
+                'success' => (bool) $success,
+                'message' => $success ? 'Permission assigned.' : 'Failed to assign permission.'
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Error occurred.',
+                'errors' => ['exception' => $e->getMessage()],
+                'statusCode' => 500
+            ];
+        }
+    }
+    public function assignRolePermission(string $role, string $permissionCode): array {
+        try {
+            // Zaten var mı kontrol et
+            $existing = $this->crudHandler->read('role_permissions', [
+                'role' => $role,
+                'permission_code' => $permissionCode
+            ], ['id'], false);
+    
+            if ($existing) {
+                return [
+                    'success' => false,
+                    'message' => 'This role already has the permission.',
+                    'statusCode' => 409
+                ];
+            }
+    
+            // Ekle
+            $result = $this->crudHandler->create('role_permissions', [
+                'role' => $role,
+                'permission_code' => $permissionCode
+            ]);
+    
+            return [
+                'success' => (bool) $result,
+                'message' => $result ? 'Permission assigned to role.' : 'Failed to assign permission.'
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Error assigning permission to role.',
+                'errors' => ['exception' => $e->getMessage()],
+                'statusCode' => 500
+            ];
+        }
+    }    
+    public function getUserPermissions(int $userId, ?int $companyId = null): array {
+        $conditions = ['user_id' => $userId];
+        if (!is_null($companyId)) {
+            $conditions['company_id'] = $companyId;
+        }
+    
+        $permissions = $this->crudHandler->read('user_permissions', $conditions, ['permission_code'], true);
     
         if ($permissions instanceof \Illuminate\Support\Collection) {
             $permissions = $permissions->toArray();
         }
     
         return array_map(function ($item) {
-            return is_array($item)
-                ? ['code' => $item['code'], 'description' => $item['description'] ?? $item['code']]
-                : ['code' => $item->code, 'description' => $item->description ?? $item->code];
+            return is_array($item) ? $item['permission_code'] : $item->permission_code;
         }, $permissions);
-    }      
-
-    public function getAllUserPermissions(?int $entityId = null, string $entityType = 'company'): array {
-        $userId = $this->userId;
+    }
+    public function removeUserPermission(int $userId, string $permissionCode, ?int $companyId = null): array {
+        try {
+            $conditions = [
+                'user_id' => $userId,
+                'permission_code' => $permissionCode
+            ];
     
-        // ✅ Admin'e tüm izinleri ver
-        if ($this->userRoleId == 1) {
-            $all = $this->crudHandler->read('permissions', [], ['code'], true);
-    
-            if ($all instanceof \Illuminate\Support\Collection) {
-                $all = $all->toArray();
+            if (!is_null($companyId)) {
+                $conditions['company_id'] = $companyId;
             }
     
-            $all = array_map(function ($item) {
-                return is_array($item) ? $item['code'] : $item->code;
-            }, $all);
+            $deleted = $this->crudHandler->delete('user_permissions', $conditions);
     
-            return $all;
+            if ($deleted) {
+                return [
+                    'success' => true,
+                    'message' => 'Permission removed successfully.'
+                ];
+            } else {
+                return [
+                    'success' => false,
+                    'message' => 'No matching permission found.'
+                ];
+            }
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Error removing permission.',
+                'errors' => ['exception' => $e->getMessage()],
+                'statusCode' => 500
+            ];
         }
-        $permissions = [];
-        $userPerms = $this->crudHandler->read('user_permissions', [
-            'user_id' => $userId,
-            [$entityType . '_id', '=', $entityId ?? 0],
-            ['expires_at', 'IS', null]
-        ], ['permission_code'], true);
+    }
+    public function getPermissionDetails(string $code): array {
+        try {
+            $permission = $this->crudHandler->read('permissions', [
+                'code' => $code
+            ], ['code', 'description', 'access_level', 'scope'], false);
     
-        if ($userPerms instanceof \Illuminate\Support\Collection) {
-            $userPerms = $userPerms->toArray();
-        }
+            if (!$permission) {
+                return [
+                    'success' => false,
+                    'message' => 'Permission not found.',
+                    'statusCode' => 404
+                ];
+            }
     
-        foreach ($userPerms as $p) {
-            $permissions[] = is_array($p) ? $p['permission_code'] : $p->permission_code;
+            if ($permission instanceof \stdClass) {
+                $permission = (array) $permission;
+            }
+    
+            return [
+                'success' => true,
+                'message' => 'Permission details retrieved.',
+                'data' => $permission
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Error retrieving permission details.',
+                'errors' => ['exception' => $e->getMessage()],
+                'statusCode' => 500
+            ];
         }
-        $role = $this->getUserEntityRole($entityId, $entityType);
-        if ($role) {
-            $rolePerms = $this->crudHandler->read('role_permissions', [
+    }
+    public function listRolePermissions(string $role): array {
+        try {
+            $permissions = $this->crudHandler->read('role_permissions', [
                 'role' => $role
             ], ['permission_code'], true);
     
-            if ($rolePerms instanceof \Illuminate\Support\Collection) {
-                $rolePerms = $rolePerms->toArray();
+            if ($permissions instanceof \Illuminate\Support\Collection) {
+                $permissions = $permissions->toArray();
             }
     
-            foreach ($rolePerms as $p) {
-                $permissions[] = is_array($p) ? $p['permission_code'] : $p->permission_code;
-            }
-        }
-        return array_values(array_unique($permissions));
-    }    
-    public function updateUserPermissions(int $targetUserId, int $companyId, array $permissionCodes): bool {
-        // Eski izinleri sil
-        $this->crudHandler->delete('user_permissions', [
-            'user_id' => $targetUserId,
-            'company_id' => $companyId
-        ]);
+            $codes = array_map(function ($item) {
+                return is_array($item) ? $item['permission_code'] : $item->permission_code;
+            }, $permissions);
     
-        // Yeni izinleri ekle
-        foreach ($permissionCodes as $code) {
-            $this->crudHandler->create('user_permissions', [
-                'user_id' => $targetUserId,
-                'company_id' => $companyId,
-                'permission_code' => $code,
-                'created_at' => date('Y-m-d H:i:s'),
-                'updated_at' => date('Y-m-d H:i:s'),
-            ]);
+            return [
+                'success' => true,
+                'message' => 'Permissions for role retrieved.',
+                'data' => ['permissions' => $codes]
+            ];
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Failed to retrieve role permissions.',
+                'errors' => ['exception' => $e->getMessage()],
+                'statusCode' => 500
+            ];
         }
-    
-        return true;
-    }    
+    }
 }
