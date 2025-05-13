@@ -27,15 +27,33 @@ class PermissionHandler {
     }
     public function checkPermission(string $permissionCode, ?int $entityId = null, string $entityType = 'company'): array {
         $userId = $this->userId;
-    
+
         if ($this->userRoleId == 1) {
             return [
                 'success' => true,
                 'message' => 'Admin override: permission granted.'
             ];
         }
-    
-        // 1. Kullanıcıya özel izin (user_permissions)
+
+        // 1. JSON üzerinden kullanıcı özel izni kontrolü (users.sPermission)
+        $user = $this->crudHandler->read('users', ['id' => $userId], ['sPermission'], false);
+        if ($user && !empty($user['sPermission'])) {
+            $json = json_decode($user['sPermission'], true);
+            if (is_array($json) && isset($json[$entityId])) {
+                $permIds = $json[$entityId];
+                $permMeta = $this->crudHandler->read('permissions', [
+                    'code' => $permissionCode
+                ], ['id'], false);
+                if ($permMeta && in_array($permMeta['id'], $permIds)) {
+                    return [
+                        'success' => true,
+                        'message' => 'Permission granted via JSON override.'
+                    ];
+                }
+            }
+        }
+
+        // 2. Kullanıcıya özel izin (user_permissions - yalnızca destekleyici)
         $userCond = [
             ['user_id', '=', $userId],
             ['permission_code', '=', $permissionCode],
@@ -44,16 +62,16 @@ class PermissionHandler {
         if ($entityId !== null) {
             $userCond[] = [$entityType . '_id', '=', $entityId];
         }
-    
+
         $userPerm = $this->crudHandler->read('user_permissions', $userCond, ['id'], false);
         if ($userPerm) {
             return [
                 'success' => true,
-                'message' => 'Permission granted by user-specific permission.'
+                'message' => 'Permission granted by user_permissions.'
             ];
         }
-    
-        // 2. Rol tabanlı izin (role_permissions)
+
+        // 3. Rol tabanlı izin (role_permissions)
         $role = $this->getUserEntityRole($entityId, $entityType);
         if ($role) {
             $rolePerm = $this->crudHandler->read('role_permissions', [
@@ -67,12 +85,12 @@ class PermissionHandler {
                 ];
             }
         }
-    
-        // 3. Genel erişim düzeyi kontrolü
+
+        // 4. Genel erişim düzeyi kontrolü (permissions.access_level)
         $permissionMeta = $this->crudHandler->read('permissions', [
             'code' => $permissionCode
         ], ['access_level'], false);
-    
+
         if (!empty($permissionMeta['access_level'])) {
             $context = [
                 'entity' => $entityType,
@@ -83,13 +101,13 @@ class PermissionHandler {
                 'role_column' => 'role'
             ];
             $hasAccess = PermissionHelper::checkVisibilityScope($permissionMeta['access_level'], $userId, $context);
-    
+
             return [
                 'success' => $hasAccess,
                 'message' => $hasAccess ? 'Permission granted by access_level.' : 'Permission denied by access_level.'
             ];
         }
-    
+
         return [
             'success' => false,
             'message' => 'Permission denied: no matching conditions found.',
@@ -210,24 +228,27 @@ class PermissionHandler {
     }    
     public function updateUserPermissions(int $targetUserId, int $companyId, array $permissionCodes): array {
         try {
-            $this->crudHandler->delete('user_permissions', [
-                'user_id' => $targetUserId,
-                'company_id' => $companyId
-            ]);
-    
+            $permissions = [];
             foreach ($permissionCodes as $code) {
-                $this->crudHandler->create('user_permissions', [
-                    'user_id' => $targetUserId,
-                    'company_id' => $companyId,
-                    'permission_code' => $code,
-                    'created_at' => date('Y-m-d H:i:s'),
-                    'updated_at' => date('Y-m-d H:i:s'),
-                ]);
+                $perm = $this->crudHandler->read('permissions', ['code' => $code], ['id'], false);
+                if ($perm && isset($perm['id'])) {
+                    $permissions[] = $perm['id'];
+                }
             }
-    
+            $user = $this->crudHandler->read('users', ['id' => $targetUserId], ['sPermission'], false);
+            $json = [];
+            if ($user && !empty($user['sPermission'])) {
+                $json = json_decode($user['sPermission'], true);
+            }
+            $json[$companyId] = $permissions;
+
+            $this->crudHandler->update('users', ['id' => $targetUserId], [
+                'sPermission' => json_encode($json)
+            ]);
+
             return [
                 'success' => true,
-                'message' => 'User permissions updated successfully.',
+                'message' => 'User permissions updated in sPermission.'
             ];
         } catch (Exception $e) {
             return [

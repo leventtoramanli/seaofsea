@@ -84,14 +84,18 @@ class CompanyHandler {
         if (!empty($existing)) {
             return $this->buildResponse(false, 'You are already a member of this company.');
         }
-        $insert = $this->crudHandler->create('company_users', [
+        $createArray=[
             'user_id' => $userId,
             'company_id' => $data['company_id'],
             'role' => $data['role'],
             'rank' => $data['rank'],
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
-        ]);
+        ];
+        if($data['role'] == 'admin'){
+            $createArray['status'] = 'approved';
+        }
+        $insert = $this->crudHandler->create('company_users', $createArray);
         if ($insert) {
             return $this->buildResponse(true, 'User added to company successfully.', ['company_user_id' => (int)$insert], false);
         }
