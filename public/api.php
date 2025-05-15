@@ -502,11 +502,19 @@ try {
         case 'get_company_followers':
         case 'get_company_detail':
         case 'get_company_types':
+        case 'get_position_areas':
+        case 'get_positions_by_area':
         case 'delete_company':
             require_once __DIR__ . '/../lib/handlers/CompanyHandler.php';
             $companyHandler = new CompanyHandler();
         
             switch ($endpoint) {
+                case 'get_position_areas':
+                    $response = $companyHandler->getPositionAreas($data);
+                    break;
+                case 'get_positions_by_area':
+                    $response = $companyHandler->getPositionsByArea($data);
+                    break;
                 case 'create_company':
                     $response = $companyHandler->createCompany($data);
                     break;

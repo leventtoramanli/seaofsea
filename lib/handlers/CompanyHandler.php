@@ -118,6 +118,61 @@ class CompanyHandler {
         $data = $companies instanceof \Illuminate\Support\Collection ? $companies->toArray() : (array) $companies;
         return $this->buildResponse(true, 'Companies fetched successfully.', $data);
     }
+    public function getPositionAreas(array $data): array {
+        try {
+            $areas = $this->crudHandler->read(
+                'company_positions',
+                [],
+                ['area', 'category'],
+                true,
+                [],
+                [],
+                ['groupBy' => ['area', 'category']],
+                true
+            );
+    
+            if (empty($areas)) {
+                return $this->buildResponse(false, 'No areas found.', []);
+            }
+    
+            // Kategorilere göre gruplandır
+            $grouped = [];
+            foreach ($areas as $row) {
+                $cat = $row['category'] ?? 'Other';
+                $area = $row['area'] ?? '';
+                if (!isset($grouped[$cat])) {
+                    $grouped[$cat] = [];
+                }
+                if (!in_array($area, $grouped[$cat]) && !empty($area)) {
+                    $grouped[$cat][] = $area;
+                }
+            }
+    
+            return $this->buildResponse(true, 'Areas fetched successfully.', $grouped);
+        } catch (Exception $e) {
+            return $this->buildResponse(false, 'Error fetching areas.', [], true, ['exception' => $e->getMessage()]);
+        }
+    }
+    public function getPositionsByArea(array $data): array {
+        try {
+            if (empty($data['area'])) {
+                return $this->buildResponse(false, 'Area is required.');
+            }
+            $positions = $this->crudHandler->read(
+                'company_positions',
+                ['area' => $data['area']],
+                ['name'],
+                true
+            );
+    
+            if (empty($positions)) {
+                return $this->buildResponse(false, 'No positions found.');
+            }
+            return $this->buildResponse(true, 'Positions fetched successfully.', $positions->toArray());
+        } catch (Exception $e) {
+            return $this->buildResponse(false, 'Error fetching positions.', [], true, ['exception' => $e->getMessage()]);
+        }
+    }
     public function getCompanyEmployees(array $data): array {
         $companyId = $data['company_id'] ?? null;
         if (!$companyId) {
