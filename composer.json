@@ -4,7 +4,7 @@
         "phpmailer/phpmailer": "^6.9",
         "firebase/php-jwt": "^6.10",
         "monolog/monolog": "^3.8",
-        "illuminate/database": "^11.36"
+        "illuminate/database": "^11.36",
+        "phpoffice/phpspreadsheet": "^4.2"
     }
 }
-

@@ -16,6 +16,7 @@ require_once __DIR__ . '/../lib/handlers/PasswordResetHandler.php';
 require_once __DIR__ . '/../lib/handlers/CRUDHandlers.php';
 require_once __DIR__ . '/../lib/handlers/ImageUploadHandler.php';
 require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
+require_once __DIR__ . '/../lib/handlers/CVHandler.php';
 
 $publicEndpoints = [
     'login',
@@ -91,16 +92,22 @@ try {
     $pHandler = null;
     if ($tokenRequired) {
         $pHandler = new PermissionHandler();
+        $cvHandler = new CVHandler();
+    }else{
+        $cvHandler = new CVHandler();
     }
     $data = json_decode(file_get_contents('php://input'), true);
     $endpoint = $_GET['endpoint'] ?? null;
 
-
+    
     if (!$endpoint) {
         jsonResponse(false, 'Endpoint is required.');
     }
     // Endpoint yönlendirmesi
     switch ($endpoint) {
+        case 'get_user_cvs':
+            jsonResponseFromArray($cvHandler->getCVByUserId($data['user_id'] ?? null));
+            break;
         case 'list_role_permissions':
             jsonResponseFromArray($pHandler->listRolePermissions($data['role'] ?? null));
             break;

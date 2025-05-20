@@ -16,13 +16,11 @@ $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
 
 // Toplam kayıt sayısı
-$total = $pdo->query("SELECT COUNT(*) FROM company_positions")->fetchColumn();
+$total = $pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
 $totalPages = ceil($total / $limit);
 
 // Verileri çek
-$stmt = $pdo->prepare("SELECT * FROM company_positions WHERE area = 'Hotel' && category = 'Office' ORDER BY category, area, department, name LIMIT :limit OFFSET :offset");
-$stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-$stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+$stmt = $pdo->prepare("SELECT * FROM certificates");
 $stmt->execute();
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -67,10 +65,12 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <tr>
       <td><?= htmlspecialchars($row['id']) ?></td>
       <td><?= htmlspecialchars($row['name']) ?></td>
-      <td><?= htmlspecialchars($row['category']) ?></td>
-      <td><?= htmlspecialchars($row['department']) ?></td>
-      <td><?= htmlspecialchars($row['area']) ?></td>
-      <td><?= htmlspecialchars($row['description']) ?></td>
+      <td><?= htmlspecialchars($row['stcw_code']) ?></td>
+      <td><?= htmlspecialchars($row['ship_type']) ?></td>
+      <td><?= htmlspecialchars($row['datelimit']) ?></td>
+      <td><?= htmlspecialchars($row['needs_all']) ?></td>
+      <td><?= htmlspecialchars($row['medical_requirements']) ?></td>
+      <td><?= htmlspecialchars($row['note']) ?></td>
     </tr>
     <?php endforeach; ?>
   </tbody>
