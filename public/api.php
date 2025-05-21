@@ -105,6 +105,12 @@ try {
     }
     // Endpoint yönlendirmesi
     switch ($endpoint) {
+        case  'listCountries':
+            jsonResponseFromArray($cvHandler->listCountries());
+            break;
+        case 'listCitiesByCountry':
+            jsonResponseFromArray($cvHandler->listCitiesByCountryName($data['country'] ?? null));
+            break;
         case 'get_user_cvs':
             jsonResponseFromArray($cvHandler->getCVByUserId($data['user_id'] ?? null));
             break;

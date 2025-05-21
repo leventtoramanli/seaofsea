@@ -17,7 +17,56 @@ class CVHandler {
         if (!self::$logger) self::$logger = getLogger();
         if (!self::$loggerInfo) self::$loggerInfo = getLoggerInfo();
     }
+    public function listCountries(): array
+    {
+        $result = $this->crud->read(
+            'cities',
+            [],
+            [
+                Capsule::raw('MIN(id) as id'),
+                Capsule::raw('country as name'),
+                Capsule::raw('iso3 as code')
+            ],
+            true,
+            [],
+            [],
+            [
+                'groupBy' => ['country', 'iso3'],
+                'orderBy' => ['country' => 'ASC']
+            ],
+            true
+        );
 
+        return [
+            'success' => true,
+            'data' => $result
+        ];
+    }
+
+    public function listCitiesByCountryName(?string $countryName): array {
+        if (empty($countryName)) {
+            return [
+                'success' => false,
+                'message' => 'Country name is required',
+                'data' => []
+            ];
+        }
+        $result = $this->crud->read(
+            'cities',
+            ['country' => $countryName, 'capital' => ['IN', ['admin', 'primary']]],
+            ['id', 'city AS name'],
+            true,
+            [],
+            [],
+            ['orderBy' => ['city' => 'ASC']],
+            true
+        );
+        return [
+            'success' => true,
+            'data' => $result
+        ];
+    }    
+    
     private function getUserId(): ?int {
         try {
             return getUserIdFromToken();
