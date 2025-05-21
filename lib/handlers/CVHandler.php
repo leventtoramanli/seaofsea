@@ -25,6 +25,7 @@ class CVHandler {
             [
                 Capsule::raw('MIN(id) as id'),
                 Capsule::raw('country as name'),
+                Capsule::raw('iso2 as code2'),
                 Capsule::raw('iso3 as code')
             ],
             true,
