@@ -106,6 +106,7 @@ try {
     // Endpoint yönlendirmesi
     switch ($endpoint) {
         case 'update_cv':
+            $logger->error('CV Updated', $data);
             jsonResponseFromArray($cvHandler->updateCV($data));
             break;
         case  'listCountries':

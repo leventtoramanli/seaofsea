@@ -17,54 +17,45 @@ class CVHandler {
         if (!self::$logger) self::$logger = getLogger();
         if (!self::$loggerInfo) self::$loggerInfo = getLoggerInfo();
     }
-    public function updateCV(): array {
+    public function updateCV(array $fields = []): array {
         $userId = $this->getUserId();
         if (!$userId) {
             return $this->buildResponse(false, 'Unauthorized');
         }
     
-        $fields = json_decode(file_get_contents('php://input'), true);
-        if (!is_array($fields)) {
-            return $this->buildResponse(false, 'Invalid input format');
+        // {"contact": {...}} gibi tek bir alan geldiyse içeriğini al
+        if (count($fields) === 1 && is_array(reset($fields))) {
+            $fields = reset($fields);
         }
     
-        $jsonFields = ['basic_info', 'education', 'work_experience', 'skills', 'certificates', 'seafarer_info', 'referances', 'phone', 'social', 'language'];
-        foreach ($jsonFields as $field) {
-            if (isset($fields[$field]) && is_string($fields[$field])) {
-                $fields[$field] = json_decode($fields[$field], true);
+        // JSON olarak saklanması gereken alanları encode et
+        $jsonFields = ['phone', 'social', 'email', 'language', 'education', 'work_experience', 'skills', 'certificates', 'seafarer_info', 'referances'];
+    
+        foreach ($fields as $key => $val) {
+            if (in_array($key, $jsonFields)) {
+                $fields[$key] = json_encode($val);
             }
         }
     
-        $data = [
-            'basic_info' => $fields['basic_info'] ?? null,
-            'education' => $fields['education'] ?? null,
-            'work_experience' => $fields['work_experience'] ?? null,
-            'skills' => $fields['skills'] ?? null,
-            'certificates' => $fields['certificates'] ?? null,
-            'seafarer_info' => $fields['seafarer_info'] ?? null,
-            'referances' => $fields['referances'] ?? null,
-            'language' => $fields['language'] ?? null,
-    
-            'professional_title' => $fields['professional_title'] ?? null,
-            'country_id' => $fields['country_id'] ?? null,
-            'city_id' => $fields['city_id'] ?? null,
-            'address' => $fields['address'] ?? null,
-            'phone' => json_encode($fields['phone'] ?? []),
-            'social' => json_encode($fields['social'] ?? []),
-            'access_scope' => $fields['access_scope'] ?? 'all',
-        ];
-    
         $existing = $this->crud->read($this->table, ['user_id' => $userId], ['*'], false);
-        if (!$existing) {
-            $this->crud->create($this->table, ['user_id' => $userId]);
-            self::$logger->info("CV record created (empty)", ['user_id' => $userId] + self::$loggerInfo);
+    
+        if ($existing) {
+            $this->crud->update($this->table, $fields, ['user_id' => $userId]);
+            self::$logger->info("CV updated", array_merge(['user_id' => $userId], $fields));
+            return $this->buildResponse(true, 'CV updated');
+        } else {
+            $fields['user_id'] = $userId;
+            $this->crud->create($this->table, $fields);
+            self::$logger->info("CV created", array_merge(['user_id' => $userId], $fields));
+            return $this->buildResponse(true, 'CV created');
         }
+    }    
     
-        $this->crud->update($this->table, $data, ['user_id' => $userId]);
-        self::$logger->info("CV updated", ['user_id' => $userId] + self::$loggerInfo);
-    
-        return $this->buildResponse(true, 'CV updated successfully');
+    private function isJson($string): bool {
+        json_decode($string);
+        return json_last_error() === JSON_ERROR_NONE;
     }
+    
     public function listCountries(): array{
         $result = $this->crud->read(
             'cities',
@@ -180,12 +171,31 @@ class CVHandler {
             return $this->buildResponse(false, 'You are not allowed to view this CV.');
         }
     
-        // 🔄 own bilgisini ekle
+        // 🔄 Şehir ve ülke isimlerini al
+        $countryName = null;
+        $cityName = null;
+    
+        if (!empty($cv['country_id'])) {
+            $country = $this->crud->read('cities', ['id' => $cv['country_id']], ['country'], false);
+            if ($country && isset($country->country)) {
+                $countryName = $country->country;
+            }
+        }
+    
+        if (!empty($cv['city_id'])) {
+            $city = $this->crud->read('cities', ['id' => $cv['city_id']], ['city'], false);
+            if ($city && isset($city->city)) {
+                $cityName = $city->city;
+            }
+        }
+    
+        $cv['country_name'] = $countryName;
+        $cv['city_name'] = $cityName;
         $cv['own'] = $isSelf;
+    
         return $this->buildResponse(true, 'CV found', $cv);
     }
     
-
     public function createOrUpdateCV(): array {
         $userId = $this->getUserId();
         if (!$userId) {
