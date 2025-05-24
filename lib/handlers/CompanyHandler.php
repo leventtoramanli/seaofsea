@@ -118,6 +118,40 @@ class CompanyHandler {
         $data = $companies instanceof \Illuminate\Support\Collection ? $companies->toArray() : (array) $companies;
         return $this->buildResponse(true, 'Companies fetched successfully.', $data);
     }
+    public function getPositionsByHandler(array $data): array {
+        $handler = $data['handler'];
+        $column = $handler['column'];
+        $value = $handler['value'];
+        $columns = $data['columns'] ?? ['*'];
+    
+        // Kolon ismini whitelist'te kontrol et
+        $allowedColumns = [
+            'id',
+            'name',
+            'category',
+            'description',
+            'created_at',
+            'department',
+            'area'
+        ];
+        if (!in_array($column, $allowedColumns)) {
+            return $this->buildResponse(false, 'Invalid column name.', [], true);
+        }
+    
+        $conditions = [$column => $value];
+        $positions = $this->crudHandler->read(
+            'company_positions',
+            $conditions,
+            $columns,
+            true
+        );
+    
+        $data = $positions instanceof \Illuminate\Support\Collection
+            ? $positions->toArray()
+            : (array) $positions;
+    
+        return $this->buildResponse(true, 'Positions fetched successfully.', $data);
+    }    
     public function getPositionAreas(array $data): array {
         try {
             $areas = $this->crudHandler->read(

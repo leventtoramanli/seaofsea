@@ -17,6 +17,7 @@ require_once __DIR__ . '/../lib/handlers/CRUDHandlers.php';
 require_once __DIR__ . '/../lib/handlers/ImageUploadHandler.php';
 require_once __DIR__ . '/../lib/handlers/PermissionHandler.php';
 require_once __DIR__ . '/../lib/handlers/CVHandler.php';
+require_once __DIR__ . '/../lib/handlers/ShipHandler.php';
 
 $publicEndpoints = [
     'login',
@@ -89,6 +90,7 @@ try {
     // Gelen isteği ve endpoint'i al
     $db = new DatabaseHandler();
     $userHandler = new UserHandler();
+    $shipHandler = new ShipHandler();
     $pHandler = null;
     if ($tokenRequired) {
         $pHandler = new PermissionHandler();
@@ -105,11 +107,14 @@ try {
     }
     // Endpoint yönlendirmesi
     switch ($endpoint) {
+        case 'get_ship_types':
+            jsonResponseFromArray($ShipHandler->getShipTypes());
+            break;
         case 'update_cv':
             $logger->error('CV Updated', $data);
             jsonResponseFromArray($cvHandler->updateCV($data));
             break;
-        case  'listCountries':
+        case 'listCountries':
             jsonResponseFromArray($cvHandler->listCountries());
             break;
         case 'listCitiesByCountry':
@@ -521,6 +526,7 @@ try {
         case 'get_company_types':
         case 'get_position_areas':
         case 'get_positions_by_area':
+        case 'get_positions_by_handler':
         case 'delete_company':
             require_once __DIR__ . '/../lib/handlers/CompanyHandler.php';
             $companyHandler = new CompanyHandler();
@@ -531,6 +537,9 @@ try {
                     break;
                 case 'get_positions_by_area':
                     $response = $companyHandler->getPositionsByArea($data);
+                    break;
+                case 'get_positions_by_handler':
+                    $response = $companyHandler->getPositionsByHandler($data);
                     break;
                 case 'create_company':
                     $response = $companyHandler->createCompany($data);

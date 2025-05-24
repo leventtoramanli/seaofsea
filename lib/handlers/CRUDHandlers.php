@@ -65,7 +65,6 @@ class CRUDHandler {
             if (!empty($pagination)) {
                 $query->limit($pagination['limit'])->offset($pagination['offset']);
             }
-            self::$logger->error("Hepsi.", ['method' => $query]);
             if ($fetchAll) {
                 $result = $query->get();
                 return $asArray ? $result->map(fn($r) => (array)$r)->toArray() : $result;
