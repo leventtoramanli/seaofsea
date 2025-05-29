@@ -1,0 +1,97 @@
+/* style.css */
+
+/* Genel stiller */
+body {
+    margin: 0;
+    display: flex;
+    height: 100vh;
+    font-family: Arial, sans-serif;
+  }
+  
+  /* Sol panel (folders) */
+  #folders {
+    width: 20%;
+    background: #dcdcdc;
+    border-right: 1px solid #aaa;
+    overflow-y: auto;
+    padding: 10px;
+  }
+  
+  /* Sağ panel (details) */
+  #details {
+    flex: 1;
+    padding: 10px;
+    overflow-y: auto;
+  }
+  
+  /* Ortak dosya ve klasör stilleri */
+  .file-item,
+  .folder {
+    cursor: pointer;
+    margin: 5px 0;
+    padding: 3px;
+  }
+  
+  /* Klasör başlık stili */
+  .folder {
+    font-weight: bold;
+    color: darkblue;
+  }
+  
+  /* Sürükle bırak efekt */
+  .drag-over {
+    background-color: rgba(0, 0, 255, 0.1);
+  }
+  
+  /* 6 nokta handle ikonu */
+  .handle {
+    cursor: move;
+    margin-right: 6px;
+  }
+  
+  /* JSON görünüm */
+  .json-item {
+    position: relative;
+    padding: 4px 8px;
+    border-bottom: 1px solid #ddd;
+    font-family: monospace;
+  }
+  
+  .json-key {
+    font-weight: bold;
+    color: #333;
+  }
+  
+  .json-value {
+    color: #666;
+  }
+  
+  .add-key-btn {
+    display: none;
+    position: absolute;
+    right: 4px;
+    cursor: pointer;
+    color: green;
+    font-weight: bold;
+  }
+  
+  .json-item:hover .add-key-btn {
+    display: inline;
+  }
+  
+  /* Edit butonu */
+  #editJsonBtn {
+    float: right;
+    margin-bottom: 10px;
+  }
+  
+  /* Genel textarea (json düzenleme) */
+  #jsonTextarea {
+    width: 100%;
+    height: 400px;
+    font-family: monospace;
+    padding: 8px;
+    border: 1px solid #ccc;
+    resize: vertical;
+  }
+  

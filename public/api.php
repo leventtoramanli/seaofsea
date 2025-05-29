@@ -108,7 +108,7 @@ try {
     // Endpoint yönlendirmesi
     switch ($endpoint) {
         case 'get_ship_types':
-            jsonResponseFromArray($ShipHandler->getShipTypes());
+            jsonResponseFromArray($shipHandler->getShipTypes());
             break;
         case 'update_cv':
             $logger->error('CV Updated', $data);

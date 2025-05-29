@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>JSON Dosya ve Klasör Düzenleyici</title>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+  <script type="module" src="./js/main.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div id="folders">
+    <button id="addFolderBtn">Yeni Klasör Ekle</button>
+    <button id="addFileBtn">Yeni Dosya Ekle</button>
+    <div id="folderList"></div>
+  </div>
+
+  <div id="details">
+    <!-- Sağ panel: JSON detayları -->
+    <button id="editJsonBtn" style="float: right; display: none;">Edit</button>
+    <div id="jsonView"></div>
+  </div>
+</body>
+
+</html>
