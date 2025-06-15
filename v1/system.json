@@ -1,0 +1,174 @@
+{
+  "version": "v1",
+  "project": "seaofsea",
+  "language": "PHP (no framework)",
+  "entry_point": "v1/index.php",
+  "flow_summary": "Flutter'dan gelen JSON istekleri `index.php` tarafından karşılanır. Router sınıfı, ilgili Handler ve Method'u çağırır. RateLimiter sınıfı device_uuid bazlı kontrol yapar. Response sınıfı ile standart JSON cevap döner. JWT token ile kimlik doğrulama yapılır.",
+  "required_php_version": ">=7.4",
+  "dependencies": {
+    "php_extensions": [
+      "PDO",
+      "openssl"
+    ],
+    "db_engine": "MySQL / MariaDB",
+    "external_libraries": "None (composer kullanılmaz)"
+  },
+  "file_structure": {
+    "v1/index.php": {
+      "role": "Ana giriş noktası. CORS ve JSON ayarlarını yapar. Core ve modül dosyalarını yükler ve yönlendirmeyi başlatır.",
+      "calls": [
+        "config/config.php",
+        "core/Response.php",
+        "core/Router.php",
+        "core/DB.php",
+        "core/JWT.php",
+        "core/Auth.php",
+        "core/logger.php",
+        "modules/AuthHandler.php",
+        "modules/UserHandler.php"
+      ]
+    },
+    "core/Router.php": {
+      "role": "Gelen JSON isteğini `module`, `action`, `params` alanlarına göre ilgili Handler’a yönlendirir. RateLimiter içerir.",
+      "rate_limit": {
+        "enabled": true,
+        "key": "device_uuid",
+        "limit": 20,
+        "interval_seconds": 60
+      },
+      "input_format": {
+        "module": "string",
+        "action": "string",
+        "params": "array (device_uuid zorunlu)"
+      }
+    },
+    "core/DB.php": {
+      "role": "PDO Singleton bağlantısı sağlar",
+      "method": "DB::getInstance()"
+    },
+    "core/JWT.php": {
+      "role": "Token üretimi ve çözümleme",
+      "payload_example": {
+        "user_id": 1,
+        "email": "john@example.com",
+        "exp": 1718200952
+      },
+      "methods": {
+        "encode": "payload + secret → token",
+        "decode": "token + secret → payload"
+      }
+    },
+    "core/Response.php": {
+      "role": "Standart JSON çıktı döner",
+      "methods": {
+        "success": "status 200, success true",
+        "error": "status 4xx/5xx, success false"
+      }
+    },
+    "core/Auth.php": {
+      "role": "Authorization token kontrolü yapar",
+      "methods": {
+        "requireAuth": "Zorunlu JWT doğrulama",
+        "check": "Opsiyonel kontrol (null döner)"
+      }
+    },
+    "core/logger.php": {
+      "role": "Tüm istekleri ve hataları loglar",
+      "log_file": "logs/v1_error.log"
+    },
+    "core/crud.php": {
+      "role": "Güvenli CRUD işlemleri için merkezi sınıf",
+      "features": [
+        "allowedTables kontrolü",
+        "userId tabanlı yetki",
+        "public access",
+        "advanced filtering"
+      ]
+    },
+    "modules/AuthHandler.php": {
+      "methods": [
+        "login",
+        "register",
+        "logout",
+        "refresh_token",
+        "validate_token"
+      ],
+      "security": {
+        "device_uuid_required": true,
+        "password_verify": true,
+        "JWT_expiration": true,
+        "refresh_token_rotation": true
+      }
+    },
+    "modules/UserHandler.php": {
+      "role": "Kullanıcı detay işlemleri (profil, update, settings vs.)"
+    }
+  },
+  "api_usage_example": {
+    "endpoint": "v1/index.php (POST)",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "module": "auth",
+      "action": "login",
+      "params": {
+        "email": "john@example.com",
+        "password": "123456",
+        "device_uuid": "abc-xyz-123"
+      }
+    },
+    "response_success": {
+      "success": true,
+      "message": "Success",
+      "data": {
+        "token": "jwt_token_here",
+        "user": {
+          "id": 1,
+          "name": "John",
+          "email": "john@example.com"
+        }
+      }
+    },
+    "response_error": {
+      "success": false,
+      "message": "User not found"
+    }
+  },
+  "runtime_flow": [
+    "Flutter → v1/index.php",
+    "index.php → Router::dispatch()",
+    "Router → module::action",
+    "module → Auth/JWT/DB/CRUD/Logger",
+    "Response → JSON output"
+  ],
+  "permissions": {
+    "system": "Role + user_permissions tabanlı kontrol",
+    "modular_acl": true,
+    "current": "v1 ile yeniden yapılandırılacak",
+    "example": {
+      "CompanyHandler::update": "company.update",
+      "UserHandler::invite": "user.invite"
+    }
+  },
+  "future_modules": [
+    "CompanyHandler.php: CRUD + Role tabanlı şirket işlemleri",
+    "PermissionHandler.php: Kullanıcı ve rol bazlı izin yönetimi",
+    "LoggingHandler.php: Kullanıcı işlemleri & hata logları",
+    "RateLimiter.php: Device veya IP tabanlı limit",
+    "ImageUploadHandler.php: WebP dönüştürme, thumbnail, metadata",
+    "SessionTracker.php: Aktif oturumların takibi",
+    "AuditLogger.php: Kullanıcı ve sistem aktiviteleri için kayıt",
+    "TaskQueueHandler.php: Gecikmeli ve arka plan işlemler"
+  ],
+  "recommended_extensions": [
+    "JWT blacklisting (logout sonrası token geçersiz kılma)",
+    "Advanced refresh token lifecycle",
+    "Modüler ACL desteği (handler+action bazlı)",
+    "WebSocket ile anlık bildirim",
+    "Image auto-resize & crop on upload",
+    "ZIP-based file export/import",
+    "VSCode plugin üzerinden doğrudan debug/test arayüzü"
+  ],
+  "developer_note": "Bu sistem RESTful değildir. Tüm işlemler merkezi endpoint üzerinden yönetilir (`v1/index.php`). Flutter istemcisi `module/action/params` yapısı ile JSON istek gönderir. RateLimiter ile saldırı engellemesi yapılır. JWT auth zorunludur. Laravel veya Composer bağımlılığı yoktur. Modüler mimariye uygun geliştirme yapılmaktadır."
+}

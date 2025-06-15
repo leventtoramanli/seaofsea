@@ -195,6 +195,52 @@ class CVHandler {
     
         return $this->buildResponse(true, 'CV found', $cv);
     }
+
+    public function listCertificates(): array {
+        $certificates = $this->crud->read(
+            'certificates',
+            [],
+            ['id','group_id', 'sort_order', 'name', 'stcw_code', 'datelimit', 'medical_requirements', 'note'],
+            true
+        );
+    
+        return [
+            'success' => true,
+            'data' => $certificates
+        ];
+    }    
+
+    public function getUserCertificates($certificatesJson) {
+        if (empty($certificatesJson)) {
+            return [];
+        }
+    
+        $certificateIds = [];
+        if (is_string($certificatesJson)) {
+            $decoded = json_decode($certificatesJson, true);
+            if (is_array($decoded)) {
+                foreach ($decoded as $cert) {
+                    if (isset($cert['id'])) {
+                        $certificateIds[] = $cert['id'];
+                    }
+                }
+            }
+        }
+    
+        if (empty($certificateIds)) {
+            return [];
+        }
+    
+        $certificates = $this->crud->read(
+            'certificates',
+            ['id' => ['IN', $certificateIds]],
+            ['id','group_id', 'sort_order', 'name', 'stcw_code', 'datelimit', 'medical_requirements', 'note'],
+            true
+        );
+    
+        return $certificates;
+    }
+    
     
     public function createOrUpdateCV(): array {
         $userId = $this->getUserId();
@@ -203,7 +249,7 @@ class CVHandler {
         }
 
         $fields = $_POST;
-        $jsonFields = ['basic_info', 'education', 'experience', 'skills', 'certificates', 'seafarer_info'];
+        $jsonFields = ['basic_info', 'education', 'experience', 'skills', 'certificates', 'seafarer_info',  'stcw_certificates'];
         foreach ($jsonFields as $field) {
             if (isset($fields[$field]) && is_string($fields[$field])) {
                 $fields[$field] = json_decode($fields[$field], true);
@@ -218,6 +264,7 @@ class CVHandler {
             'skills' => $fields['skills'] ?? [],
             'certificates' => $fields['certificates'] ?? [],
             'seafarer_info' => $fields['seafarer_info'] ?? null,
+            'stcw_certificates' => $fields['certificates'] ?? [],
         ];
 
         $existing = $this->crud->read($this->table, ['user_id' => $userId], ['*'], false);

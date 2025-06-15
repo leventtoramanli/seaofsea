@@ -167,7 +167,7 @@ class ImageUploadHandler
 
         $sourceImage = match ($imageType) {
             IMAGETYPE_JPEG => imagecreatefromjpeg($filePath),
-            IMAGETYPE_PNG => imagecreatefrompng($filePath),
+            IMAGETYPE_PNG => imagecreatefrompng($filePath), 
             IMAGETYPE_GIF => imagecreatefromgif($filePath),
             default => throw new Exception('Unsupported image type.'),
         };

@@ -114,6 +114,12 @@ try {
             $logger->error('CV Updated', $data);
             jsonResponseFromArray($cvHandler->updateCV($data));
             break;
+        case 'get_user_certificates':
+            jsonResponseFromArray($cvHandler->getUserCertificates($data['certificates'] ?? null));
+            break;
+        case 'list_certificates':
+            jsonResponseFromArray($cvHandler->listCertificates());
+            break;
         case 'listCountries':
             jsonResponseFromArray($cvHandler->listCountries());
             break;
@@ -320,7 +326,7 @@ try {
                 // 📌 Dinamik olarak klasör belirleme
                 $validTypes = [
                     'cover' => 'images/user/covers',
-                    'user' => 'images/user',
+                    'user' => 'images/user/user',
                     'blog' => 'images/blog',
                     'product' => 'images/products',
                 ];
@@ -515,6 +521,7 @@ try {
             jsonResponse($result['success'], $result['message']);
             break;
         case 'create_company':
+        case 'get_company_users':
         case 'create_user_company':
         case 'get_user_companies':
         case 'get_user_company_role':
@@ -549,6 +556,9 @@ try {
                     break;
                 case 'get_user_companies':
                     $response = $companyHandler->getUserCompanies($data);
+                    break;
+                case 'get_company_users':
+                    $response = $companyHandler->getCompanyUsers($data);
                     break;
                 case 'get_companies':
                     $response = $companyHandler->getAllCompanies($data);

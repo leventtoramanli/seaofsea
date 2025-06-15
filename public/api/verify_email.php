@@ -73,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resend_email'])) {
                     'expires_at' => $expiresAt
                 ]);
 
-                $verificationLink = "https://seaofsea.com/api/verify_email.php?token=$newToken";
+                $verificationLink = "https://seaofsea.com/public/api/verify_email.php?token=$newToken";
                 $mailHandler->sendMail($email, 'Email Verification', "
                     <h1>Email Verification</h1>
                     <p>Please click the link below to verify your email:</p>

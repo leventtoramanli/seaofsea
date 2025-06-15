@@ -20,6 +20,7 @@ if ($token) {
         $resetRequest = $resetHandler->verifyResetToken($token);
         $showForm = true;
         $email = $resetRequest->email;
+        $message = "Please enter your new password.";
     } catch (\Exception $e) {
         $message = $e->getMessage();
     }

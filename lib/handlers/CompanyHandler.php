@@ -21,6 +21,7 @@ class CompanyHandler {
         }
     }
     private function buildResponse(bool $success, string $message, array $data = [], bool $showMessage = false, array $errors = []): array {
+        self::$logger->error('CompanyHandler buildResponse', ['success' => $success, 'message' => $message, 'data' => $data, 'showMessage' => $showMessage, 'errors' => $errors]);
         return [
             'success' => $success,
             'message' => $message,
@@ -101,7 +102,85 @@ class CompanyHandler {
         }
         return $this->buildResponse(false, 'Failed to add user to company.');
     }
-    public function getUserCompanies(array $data): array {
+    public function getCompanyUsers(array $data = []): array {
+        $userId = $this->userId;
+        if (!$userId) {
+            return $this->buildResponse(false, 'User ID is required.');
+        }
+    
+        $companyId = $data['company_id'] ?? null;
+        $role = $data['role'] ?? null;
+        $rank = $data['rank'] ?? null;
+    
+        if (!$companyId) {
+            return $this->buildResponse(false, 'Company ID is required.');
+        }
+    
+        $joins = [
+            [
+                'type' => 'inner',
+                'table' => 'users',
+                'on1' => 'company_users.user_id',
+                'operator' => '=',
+                'on2' => 'users.id'
+            ],
+            [
+                'type' => 'left',
+                'table' => 'users as first_approver',
+                'on1' => 'company_users.approvalF',
+                'operator' => '=',
+                'on2' => 'first_approver.id'
+            ],
+            [
+                'type' => 'left',
+                'table' => 'users as second_approver',
+                'on1' => 'company_users.approvalS',
+                'operator' => '=',
+                'on2' => 'second_approver.id'
+            ],
+        ];
+    
+        $conditions = ['company_users.company_id' => $companyId];
+    
+        if ($role !== null) {
+            $conditions['company_users.role'] = $role;
+        }
+        if ($rank !== null) {
+            $conditions['company_users.rank'] = $rank;
+        }
+    
+        $columns = [
+            'users.id',
+            'users.name',
+            'users.surname',
+            'users.user_image',
+            'company_users.role',
+            'company_users.rank',
+            'company_users.status',
+            'company_users.created_at',
+            'company_users.approvalF',
+            'company_users.approvalS',
+            'first_approver.name as approvalF_name',
+            'first_approver.surname as approvalF_surname',
+            'second_approver.name as approvalS_name',
+            'second_approver.surname as approvalS_surname',
+        ];
+    
+        $users = $this->crudHandler->read(
+            'company_users',
+            $conditions,
+            $columns,
+            true,
+            $joins,
+            [], // Pagination yok
+            [],
+            true // asArray true dönsün
+        );
+    
+        return $this->buildResponse(true, 'Users fetched successfully.', ['data' => $users]);
+    }
+    
+    public function getUserCompanies(array $data = []): array {
         $userId = $this->userId;
         if (!$userId) {
             return ['success' => false, 'message' => 'User ID is required.'];
@@ -113,7 +192,7 @@ class CompanyHandler {
             'on2' => 'companies.id'
         ]];
         $conditions = ['company_users.user_id' => $userId];
-        $columns = ['companies.id', 'companies.name', 'companies.created_at', 'companies.logo', 'company_users.role'];
+        $columns = ['companies.id', 'companies.name', 'companies.created_at', 'companies.logo', 'company_users.role', 'company_users.rank', 'company_users.status'];
         $companies = $this->crudHandler->read('company_users', $conditions, $columns, true, $joins);
         $data = $companies instanceof \Illuminate\Support\Collection ? $companies->toArray() : (array) $companies;
         return $this->buildResponse(true, 'Companies fetched successfully.', $data);
