@@ -1,4 +1,5 @@
 <?php
+
 require_once __DIR__ . '/MailHandler.php';
 require_once __DIR__ . '/CRUDHandlers.php';
 
@@ -39,9 +40,10 @@ class UserHandler
         return $checked;
     }
 
-    public function getAllRoles() {
+    public function getAllRoles()
+    {
         return $this->crud->read('roles', fetchAll: true);
-    }    
+    }
 
     public function validateAndRegisterUser($data)
     {
@@ -135,13 +137,13 @@ class UserHandler
                 ->where('user_id', $user->id)
                 ->where('device_info', $data['device_uuid'] ?? null) // Device UUID eşleşmesi
                 ->first();
-        
+
             if (!$refreshTokenData || strtotime($refreshTokenData->expires_at) < time()) {
                 // Refresh Token yoksa veya süresi dolmuşsa, yeni bir refresh token oluştur
                 $refreshToken = bin2hex(random_bytes(16));
                 $expiresAt = date('Y-m-d H:i:s', strtotime($rememberTm));
                 $deviceUUID = $data['device_uuid'] ?? null;
-        
+
                 // Refresh token'ı güncelle veya ekle
                 Capsule::table('refresh_tokens')->updateOrInsert(
                     ['user_id' => $user->id, 'device_info' => $deviceUUID],
@@ -261,13 +263,11 @@ class UserHandler
             self::$logger->info("✅ Token çözüldü. User ID: " . ($decoded->data->id ?? 'null'));
 
             return $decoded->data->id ?? null;
-        }
-        catch (ExpiredException $e) {
+        } catch (ExpiredException $e) {
             http_response_code(401); // 🔥 Flutter burada refresh tetikler
             self::$logger->warning('⏰ Token süresi dolmuş: ' . $e->getMessage());
             return null;
-        }
-        catch (Exception $e) {
+        } catch (Exception $e) {
             self::$logger->error('❌ JWT decode hatası: ' . $e->getMessage());
             return null;
         }
@@ -320,10 +320,12 @@ class UserHandler
     private function validateUserData($data)
     {
         $errors = [];
-        if (empty($data['name']))
+        if (empty($data['name'])) {
             $errors[] = "Name is required.";
-        if (empty($data['surname']))
+        }
+        if (empty($data['surname'])) {
             $errors[] = "Surname is required.";
+        }
         if (empty($data['email']) || !filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Valid email is required.";
         } else {
@@ -369,9 +371,10 @@ class UserHandler
             ]
         ];
         return JWT::encode($payload, $secretKey, 'HS256');
-    }  
+    }
 
-    public function cleanExpiredTokens() {
+    public function cleanExpiredTokens()
+    {
         try {
             $deletedCount = $this->crud->deleteExpiredRefreshTokens();
             if ($deletedCount > 0) {
@@ -381,15 +384,16 @@ class UserHandler
             self::$logger->error('Error while cleaning expired refresh tokens.', ['exception' => $e]);
         }
     }
-    
 
-    public function logout($refreshToken, $deviceUUID = null, $allDevices = false) {
-    
+
+    public function logout($refreshToken, $deviceUUID = null, $allDevices = false)
+    {
+
         try {
             if ($allDevices) {
                 // Tüm cihazlardan çıkış
                 $refreshTokenData = Capsule::table('refresh_tokens')->where('token', $refreshToken)->first();
-    
+
                 if ($refreshTokenData) {
                     Capsule::table('refresh_tokens')->where('user_id', $refreshTokenData->user_id)->delete();
                 }
@@ -405,7 +409,7 @@ class UserHandler
             self::$logger->error('Error while logging out.', ['exception' => $e]);
             return ['success' => false, 'message' => 'An error occurred while logging out.'];
         }
-    }   
+    }
     public function validateToken($data)
     {
         $refreshToken = $data['refresh_token'] ?? null;
@@ -496,44 +500,46 @@ class UserHandler
             : ['success' => false, 'message' => 'Update failed.'];
     }
 
-    public function changePassword($data){
-    $userId = $this->getUserIdFromToken();
-    if (!$userId) {
-        return ['success' => false, 'message' => 'Unauthorized.'];
+    public function changePassword($data)
+    {
+        $userId = $this->getUserIdFromToken();
+        if (!$userId) {
+            return ['success' => false, 'message' => 'Unauthorized.'];
+        }
+
+        $currentPassword = $data['current_password'] ?? null;
+        $newPassword = $data['new_password'] ?? null;
+
+        if (!$currentPassword || !$newPassword) {
+            return ['success' => false, 'message' => 'All fields are required.'];
+        }
+
+        $user = $this->crud->read('users', conditions: ['id' => $userId], fetchAll: false);
+
+        if (!$user) {
+            return ['success' => false, 'message' => 'User not found.'];
+        }
+
+        // Parola doğrulama
+        if (!password_verify($currentPassword, $user->password)) {
+            return ['success' => false, 'message' => 'Current password is incorrect.'];
+        }
+
+        // Parolayı güncelle
+        $hashedPassword = password_hash($newPassword, PASSWORD_DEFAULT);
+        $updated = $this->crud->update('users', ['password' => $hashedPassword], ['id' => $userId]);
+
+        if ($updated) {
+            return ['success' => true, 'message' => 'Password updated successfully.'];
+        } else {
+            return ['success' => false, 'message' => 'Failed to update password.'];
+        }
     }
 
-    $currentPassword = $data['current_password'] ?? null;
-    $newPassword = $data['new_password'] ?? null;
-
-    if (!$currentPassword || !$newPassword) {
-        return ['success' => false, 'message' => 'All fields are required.'];
-    }
-
-    $user = $this->crud->read('users', conditions: ['id' => $userId], fetchAll: false);
-
-    if (!$user) {
-        return ['success' => false, 'message' => 'User not found.'];
-    }
-
-    // Parola doğrulama
-    if (!password_verify($currentPassword, $user->password)) {
-        return ['success' => false, 'message' => 'Current password is incorrect.'];
-    }
-
-    // Parolayı güncelle
-    $hashedPassword = password_hash($newPassword, PASSWORD_DEFAULT);
-    $updated = $this->crud->update('users', ['password' => $hashedPassword], ['id' => $userId]);
-
-    if ($updated) {
-        return ['success' => true, 'message' => 'Password updated successfully.'];
-    } else {
-        return ['success' => false, 'message' => 'Failed to update password.'];
-    }
 }
 
-}
-
-function getUserIdFromToken() {
+function getUserIdFromToken()
+{
     $headers = getallheaders();
     $serverHeaders = $_SERVER;
 
@@ -583,7 +589,8 @@ function getUserIdFromToken() {
     }
 }
 
-function getRefreshTokenFromDB($oldAccessToken) {
+function getRefreshTokenFromDB($oldAccessToken)
+{
     $userData = JWT::decode($oldAccessToken, new Key($_ENV['JWT_SECRET'], 'HS256'));
 
     $refreshToken = Capsule::table('refresh_tokens')
@@ -592,4 +599,3 @@ function getRefreshTokenFromDB($oldAccessToken) {
 
     return $refreshToken ?: null;
 }
-
