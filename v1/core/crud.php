@@ -193,34 +193,196 @@ class Crud
         }
     }
 
-    public function read(string $table, array $conditions = [], bool $fetchAll = true): mixed
-    {
+    public function read(
+    string $table,
+    array $conditions = [],
+    array|bool $columnsOrFetchAll = ['*'],
+    bool $fetchAll = true,
+    array $orderBy = [],
+    array $groupBy = [],
+    array $options = []
+    ): mixed {
         if (!$this->isAllowedTable($table) || !$this->hasPermission('read', $table)) {
             return false;
         }
 
-        $sql = "SELECT * FROM `$table`";
-        if (!empty($conditions)) {
-            foreach (array_keys($conditions) as $col) {
-                if (!$this->isValidColumn($table, $col)) {
-                    return false;
+        // --- Geri uyum & kolon listesi ---
+        $columns = ['*'];
+        if (is_bool($columnsOrFetchAll)) {
+            // Eski kullanım: read('users', ['id'=>1], false)
+            $fetchAll = $columnsOrFetchAll;
+        } elseif (is_array($columnsOrFetchAll) && !empty($columnsOrFetchAll)) {
+            $columns = $columnsOrFetchAll;
+        }
+        $select = implode(', ', $columns);
+
+        $sql = "SELECT {$select} FROM `{$table}`";
+
+        // --- WHERE builder (operatör destekli) ---
+        // Desteklenen formatlar:
+        //  ['col' => 'val']                => col = :col
+        //  ['col' => ['IN', [1,2,3]]]      => col IN (:col_0,:col_1,:col_2)
+        //  ['col' => ['NOT IN', [...]]]
+        //  ['col' => ['LIKE', '%foo%']]
+        //  ['col' => ['>', 10]], ['<=', ...], ['!=', ...]
+        //  ['col' => ['BETWEEN', [$from, $to]]]
+        //  ['col' => ['IS NULL']] / ['IS NOT NULL']
+        $whereParts = [];
+        $params = [];
+        $idx = 0;
+
+        foreach ($conditions as $col => $val) {
+            if (!$this->isValidColumn($table, $col)) {
+                return false;
+            }
+
+            // Normal eşitlik
+            if (!is_array($val)) {
+                $ph = ":{$col}";
+                $whereParts[] = "`{$col}` = {$ph}";
+                $params[$col] = $val;
+                continue;
+            }
+
+            // Operatörlü kullanım
+            $op = strtoupper((string)($val[0] ?? ''));
+            switch ($op) {
+                case 'IN':
+                case 'NOT IN':
+                    $list = (array)($val[1] ?? []);
+                    if (empty($list)) {
+                        // IN () boş ise her zaman false döner; güvenli yaklaşım:
+                        $whereParts[] = ($op === 'IN') ? '1=0' : '1=1';
+                        break;
+                    }
+                    $phs = [];
+                    foreach ($list as $item) {
+                        $phName = "{$col}_{$idx}";
+                        $phs[] = ":{$phName}";
+                        $params[$phName] = $item;
+                        $idx++;
+                    }
+                    $whereParts[] = "`{$col}` {$op} (" . implode(',', $phs) . ")";
+                    break;
+
+                case 'LIKE':
+                    $ph = ":{$col}_like_{$idx}";
+                    $whereParts[] = "`{$col}` LIKE {$ph}";
+                    $params["{$col}_like_{$idx}"] = $val[1] ?? '';
+                    $idx++;
+                    break;
+
+                case 'BETWEEN':
+                    $range = (array)($val[1] ?? []);
+                    $fromPh = ":{$col}_from_{$idx}";
+                    $toPh   = ":{$col}_to_{$idx}";
+                    $whereParts[] = "`{$col}` BETWEEN {$fromPh} AND {$toPh}";
+                    $params["{$col}_from_{$idx}"] = $range[0] ?? null;
+                    $params["{$col}_to_{$idx}"]   = $range[1] ?? null;
+                    $idx++;
+                    break;
+
+                case 'IS NULL':
+                case 'IS NOT NULL':
+                    $whereParts[] = "`{$col}` {$op}";
+                    break;
+
+                case '>':
+                case '>=':
+                case '<':
+                case '<=':
+                case '!=':
+                case '<>':
+                case '=':
+                    $ph = ":{$col}_cmp_{$idx}";
+                    $whereParts[] = "`{$col}` {$op} {$ph}";
+                    $params["{$col}_cmp_{$idx}"] = $val[1] ?? null;
+                    $idx++;
+                    break;
+
+                default:
+                    // Tanınmayan operatör -> eşitlik gibi davran
+                    $ph = ":{$col}_eq_{$idx}";
+                    $whereParts[] = "`{$col}` = {$ph}";
+                    $params["{$col}_eq_{$idx}"] = $val[1] ?? null;
+                    $idx++;
+                    break;
+            }
+        }
+
+        if (!empty($whereParts)) {
+            $sql .= ' WHERE ' . implode(' AND ', $whereParts);
+        }
+
+        // --- GROUP BY ---
+        if (!empty($groupBy)) {
+            // groupBy: ['country','iso3'] veya ['country' => 'ASC'] (direction yok sayılır)
+            $groupCols = array_values(array_map(fn($c) => (string)$c, array_keys(is_assoc($groupBy) ? $groupBy : array_flip($groupBy))));
+            $sql .= ' GROUP BY ' . implode(', ', array_map(fn($c) => $c, $groupCols));
+        }
+
+        // --- ORDER BY ---
+        if (!empty($orderBy)) {
+            // orderBy: ['country' => 'ASC', 'name' => 'DESC'] veya [['column'=>'country','direction'=>'ASC']]
+            $parts = [];
+            if (is_assoc($orderBy)) {
+                foreach ($orderBy as $col => $dir) {
+                    $dir = strtoupper((string)$dir) === 'DESC' ? 'DESC' : 'ASC';
+                    $parts[] = "{$col} {$dir}";
+                }
+            } else {
+                foreach ($orderBy as $o) {
+                    $col = $o['column'] ?? null;
+                    if (!$col) continue;
+                    $dir = strtoupper((string)($o['direction'] ?? 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
+                    $parts[] = "{$col} {$dir}";
                 }
             }
-            $sql .= " WHERE " . implode(' AND ', array_map(fn ($k) => "$k = :$k", array_keys($conditions)));
+            if ($parts) {
+                $sql .= ' ORDER BY ' . implode(', ', $parts);
+            }
+        }
+
+        // --- LIMIT/OFFSET (options) ---
+        $limit  = $options['limit']  ?? null;
+        $offset = $options['offset'] ?? null;
+        if ($limit !== null) {
+            $sql .= ' LIMIT :__limit';
+            $params['__limit'] = (int)$limit;
+            if ($offset !== null) {
+                $sql .= ' OFFSET :__offset';
+                $params['__offset'] = (int)$offset;
+            }
         }
 
         try {
             $stmt = $this->pdo->prepare($sql);
-            $stmt->execute($conditions);
-            return $fetchAll ? $stmt->fetchAll(PDO::FETCH_ASSOC) : $stmt->fetch(PDO::FETCH_ASSOC);
+
+            // Tip güvenli bind
+            foreach ($params as $k => $v) {
+                $type = is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR;
+                $stmt->bindValue(':' . $k, $v, $type);
+            }
+
+            $stmt->execute();
+            return $fetchAll ? $stmt->fetchAll(PDO::FETCH_ASSOC)
+                            : $stmt->fetch(PDO::FETCH_ASSOC);
+
         } catch (PDOException $e) {
-            Logger::error("READ failed in $table", [
+            Logger::error("READ failed in {$table}", [
+                'sql'   => $sql,
+                'params'=> $params,
                 'error' => $e->getMessage(),
-                'code' => $e->getCode(),
+                'code'  => $e->getCode(),
                 'trace' => $e->getTraceAsString()
             ]);
             return false;
         }
+    }
+
+    /** küçük yardımcı: dizinin asosiatif olup olmadığını kontrol */
+    function is_assoc(array $arr): bool {
+        return array_keys($arr) !== range(0, count($arr) - 1);
     }
 
     public function update(string $table, array $data, array $conditions): bool

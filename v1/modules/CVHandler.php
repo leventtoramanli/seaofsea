@@ -3,32 +3,29 @@ require_once __DIR__ . '/../core/Auth.php';
 require_once __DIR__ . '/../core/Response.php';
 require_once __DIR__ . '/../core/Crud.php';
 
-class CvHandler
+class CVHandler
 {
     /* ===== Public API (actions) ===== */
 
     // Router action: get_cv
     public static function get_cv(array $params = []): array { return self::getCV($params); }
-    public static function listCertificates(array $params): array { return self::list_certificates($params); }
+    public static function get_cv_by_user_id(array $params = []): array { return self::getCVByUserId($params); }
+    public static function update_cv(array $params = []): array       { return self::updateCV($params); }
+    public static function listCertificates(array $p = []): array     { return self::list_certificates($p); }
+    public static function listCitiesByCountry(array $p = []): array  { return self::list_cities_by_country($p); }
 
     public static function getCV(array $params = []): array
     {
-        $auth = Auth::requireAuth();
+        $auth   = Auth::requireAuth();
         $userId = (int)$auth['user_id'];
-        $crud = new Crud($userId);
+        $crud   = new Crud($userId);
 
-        // Satır yoksa oluşturma yapmıyoruz; boş data döneriz
         $cv = $crud->read('user_cv', ['user_id' => $userId], fetchAll: false);
-
         if (!$cv) {
-            return self::ok([
-                'own' => true,
-                'user_id' => $userId,
-                // Flutter tarafı null/[] toleranslı
-            ]);
+            return self::ok(['own' => true, 'user_id' => $userId]);
         }
 
-        // İsimleri cities tablosundan
+        // Ülke/şehir isimleri
         $countryName = null; $cityName = null;
         if (!empty($cv['country_id'])) {
             $c = $crud->read('cities', ['id' => (int)$cv['country_id']], ['country'], false);
@@ -39,7 +36,6 @@ class CvHandler
             $cityName = $c['city'] ?? null;
         }
 
-        // Normalize: text/json alanları Flutter’ın beklediği formata çevir
         $data = [
             'own'                => true,
             'basic_info'         => $cv['basic_info'] ?? '',
@@ -50,16 +46,20 @@ class CvHandler
             'city_name'          => $cityName,
             'address'            => $cv['address'] ?? '',
             'zip_code'           => $cv['zip_code'] ?? '',
-            'phone'              => self::toList($cv['phone'] ?? null),
-            'email'              => self::toList($cv['email'] ?? null),
-            'social'             => self::toList($cv['social'] ?? null),
-            'language'           => self::toList($cv['language'] ?? null),
-            'education'          => self::toList($cv['education'] ?? null),
-            'work_experience'    => self::toList($cv['work_experience'] ?? null),
-            'skills'             => self::toList($cv['skills'] ?? null),
-            'certificates'       => self::toList($cv['certificates'] ?? null),
-            'seafarer_info'      => self::toList($cv['seafarer_info'] ?? null),
-            'references'         => self::toList($cv['references'] ?? null),
+            // >>> ŞU ÜÇÜ STRING JSON KALSIN
+            'phone'              => is_string($cv['phone']  ?? '') ? $cv['phone']  : json_encode($cv['phone']  ?? []),
+            'email'              => is_string($cv['email']  ?? '') ? $cv['email']  : json_encode($cv['email']  ?? []),
+            'social'             => is_string($cv['social'] ?? '') ? $cv['social'] : json_encode($cv['social'] ?? []),
+
+            // Bunlar string JSON da olabilir, dizi de olabilir; Flutter her iki duruma toleranslı.
+            'language'           => $cv['language'] ?? '[]',
+            'education'          => $cv['education'] ?? '[]',
+            'work_experience'    => $cv['work_experience'] ?? '[]',
+            'skills'             => $cv['skills'] ?? '[]',
+            'certificates'       => $cv['certificates'] ?? '[]',
+            'seafarer_info'      => $cv['seafarer_info'] ?? '[]',
+            'references'         => $cv['references'] ?? '[]',
+
             'access_scope'       => $cv['access_scope'] ?? null,
             'updated_at'         => $cv['updated_at'] ?? null,
         ];
@@ -67,24 +67,19 @@ class CvHandler
         return self::ok($data);
     }
 
-    // Router action: get_cv_by_user_id
-    public static function get_cv_by_user_id(array $params = []): array { return self::getCVByUserId($params); }
-
     public static function getCVByUserId(array $params = []): array
     {
-        $auth = Auth::requireAuth();
+        $auth     = Auth::requireAuth();
         $viewerId = (int)$auth['user_id'];
         $targetId = (int)($params['user_id'] ?? 0);
         if (!$targetId) return Response::fail('User ID missing', 400);
 
         $crud = new Crud($viewerId);
-        $cv = $crud->read('user_cv', ['user_id' => $targetId], fetchAll: false);
-
+        $cv   = $crud->read('user_cv', ['user_id' => $targetId], fetchAll: false);
         if (!$cv) {
             return self::ok(['user_id' => $targetId, 'own' => ($viewerId === $targetId)]);
         }
 
-        // Ülke/şehir adları
         if (!empty($cv['country_id'])) {
             $c = $crud->read('cities', ['id' => (int)$cv['country_id']], ['country'], false);
             $cv['country_name'] = $c['country'] ?? null;
@@ -94,15 +89,22 @@ class CvHandler
             $cv['city_name'] = $c['city'] ?? null;
         }
 
-        // Kullanıcı resmi (opsiyonel)
+        // kullanıcı görseli (opsiyonel)
         $u = $crud->read('users', ['id' => $targetId], ['user_image'], false);
         if ($u) $cv['user_image'] = $u['user_image'] ?? null;
 
         $cv['own'] = ($viewerId === $targetId);
 
-        // JSON alanları diziye çevir
-        foreach (['phone','email','social','language','education','work_experience','skills','certificates','seafarer_info','references'] as $k) {
-            $cv[$k] = self::toList($cv[$k] ?? null);
+        // >>> STRING JSON olsun
+        foreach (['phone','email','social'] as $k) {
+            $cv[$k] = is_string($cv[$k] ?? '') ? $cv[$k] : json_encode($cv[$k] ?? []);
+        }
+
+        // Diğer büyük alanları da varsa string JSON default’la:
+        foreach (['language','education','work_experience','skills','certificates','seafarer_info','references'] as $k) {
+            if (!isset($cv[$k]) || $cv[$k] === null || $cv[$k] === '') {
+                $cv[$k] = '[]';
+            }
         }
 
         return self::ok($cv);
@@ -162,9 +164,6 @@ class CvHandler
 
         return self::ok($rows ?: []);
     }
-
-    // Router action: update_cv
-    public static function update_cv(array $params = []): array { return self::updateCV($params); }
 
     public static function updateCV(array $params = []): array
     {
