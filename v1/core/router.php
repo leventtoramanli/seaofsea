@@ -71,7 +71,8 @@ class Router
             $result = call_user_func([$module, $action], $params);
             Response::success($result);
         } catch (Throwable $e) {
-            Response::error("An error occurred during processing: " . $e->getMessage(), 500);
+            Logger::exception($e, "Router dispatch failed: {$input['module']}.{$input['action']}");
+            Response::error("An error occurred during processing.", 500);
         }
     }
 }

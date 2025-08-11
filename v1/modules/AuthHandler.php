@@ -3,7 +3,7 @@
 require_once __DIR__ . '/../core/Response.php';
 require_once __DIR__ . '/../core/JWT.php';
 require_once __DIR__ . '/../core/DB.php';
-require_once __DIR__ . '/../core/Logger.php';
+require_once __DIR__ . '/../core/log.php';
 require_once __DIR__ . '/../core/Crud.php';
 class AuthHandler
 {
@@ -35,7 +35,9 @@ class AuthHandler
         // Kullanıcıyı veritabanından çek
         $user = self::$crud->read('users', ['email' => $email], false);
         if (!$user) {
+            Logger::error("Login failed: user not found", ['email' => $email]);
             Response::error("User not found", 404);
+            exit;
         }
 
         // Şifre kontrolü
@@ -111,33 +113,39 @@ class AuthHandler
             return ['success' => false, 'message' => 'Refresh token or device UUID is required.'];
         }
 
-        // userId henüz bilinmiyor, sorguyu yapıyoruz
+        // Geçerli cihaz ve token ile user_devices tablosunda eşleşen kayıt var mı?
         $tempCrud = new Crud(null);
-        $record = $tempCrud->read('refresh_tokens', [
+        $record = $tempCrud->read('user_devices', [
             'refresh_token' => $refreshToken,
-            'device_uuid' => $deviceUUID
+            'device_uuid' => $deviceUUID,
+            'is_active' => 1
         ], false);
 
-        if (!$record) {
-            return ['success' => false, 'message' => 'Refresh token not found.'];
+        if (!$record || empty($record['user_id'])) {
+            return ['success' => false, 'message' => 'Valid device not found or token expired.'];
         }
 
-        // userId'yi bulduk, artık güvenli Crud kullanabiliriz
-        self::init($record['user_id']);
+        $userId = $record['user_id'];
+        self::init($userId);
 
-        $user = self::$crud->read('users', ['id' => $record['user_id']], false);
+        $user = self::$crud->read('users', ['id' => $userId], false);
         if (!$user) {
             return ['success' => false, 'message' => 'User not found.'];
         }
 
-        $newJwt = JWT::encode(['user_id' => $user['id']], $_ENV['JWT_SECRET']);
+        // Yeni JWT ve refresh_token oluştur
+        $config = require __DIR__ . '/../config/config.php';
+        $newJwt = JWT::encode(['user_id' => $user['id']], $config['jwt']['secret']);
         $newRefresh = bin2hex(random_bytes(32));
+        $now = date('Y-m-d H:i:s');
 
-        self::$crud->update('refresh_tokens', [
-            'id' => $record['id']
-        ], [
+        // Güncelle
+        self::$crud->update('user_devices', [
             'refresh_token' => $newRefresh,
-            'created_at' => date('Y-m-d H:i:s')
+            'last_used_at' => $now,
+            'expires_at' => date('Y-m-d H:i:s', strtotime('+30 days'))
+        ], [
+            'id' => $record['id']
         ]);
 
         return [
@@ -159,7 +167,8 @@ class AuthHandler
         }
 
         try {
-            $decoded = JWT::decode($token, $_ENV['JWT_SECRET']);
+            $config = require __DIR__ . '/../config/config.php';
+            $decoded = JWT::decode($token, $config['jwt']['secret']);
             if (!isset($decoded['user_id'])) {
                 return ['valid' => false, 'message' => 'Invalid token structure'];
             }
@@ -181,148 +190,148 @@ class AuthHandler
                 ]
             ];
         } catch (Exception $e) {
+            Logger::exception($e, 'Token Verification Failed');
             return ['valid' => false, 'message' => 'Token verification failed'];
         }
     }
     public static function logout(array $params): array
     {
-        $refreshToken = $params['refresh_token'] ?? null;
+        // Kimlik doğrulama header'ından kullanıcıyı al
+        $auth = Auth::requireAuth();
+        $userId = (int)$auth['user_id'];
+        $crud = new Crud($userId);
+
+        $allDevices = !empty($params['all_devices']) || !empty($params['allDevices']);
         $deviceUUID = $params['device_uuid'] ?? null;
-        $allDevices = $params['all_devices'] ?? false;
-
-        if (!$refreshToken) {
-            return ['success' => false, 'message' => 'Missing refresh token'];
-        }
-
-        // Token'dan kullanıcıyı bul
-        $record = Crud::getInstance()->read('user_devices', [
-            'refresh_token' => $refreshToken
-        ], false);
-
-        if (!$record) {
-            return ['success' => false, 'message' => 'Invalid refresh token'];
-        }
-
-        $userId = $record['user_id'];
-        $crud = Crud::getInstance($userId);
 
         if ($allDevices) {
             // Tüm cihazlardan çıkış
-            $deleted = $crud->update('user_devices', [
-                'is_active' => 0,
-                'refresh_token' => null
+            $ok = $crud->update('user_devices', [
+                'is_active'   => 0,
+                'expires_at'  => date('Y-m-d H:i:s'),
+                'refresh_token' => null,
             ], ['user_id' => $userId]);
 
-            return [
-                'success' => true,
-                'message' => 'Logout from all devices successful',
-                'updated' => $deleted
-            ];
+            return ['success' => (bool)$ok, 'message' => 'Logout from all devices successful'];
         }
 
-        // Tek cihazdan çıkış
         if (!$deviceUUID) {
             return ['success' => false, 'message' => 'Missing device UUID'];
         }
 
-        $crud->update('user_devices', [
-            'is_active' => 0,
-            'refresh_token' => null
+        // Sadece bu cihazdan çıkış
+        $ok = $crud->update('user_devices', [
+            'is_active'   => 0,
+            'expires_at'  => date('Y-m-d H:i:s'),
+            'refresh_token' => null,
         ], [
-            'user_id' => $userId,
-            'device_uuid' => $deviceUUID
+            'user_id'     => $userId,
+            'device_uuid' => $deviceUUID,
         ]);
 
-        return ['success' => true, 'message' => 'Logout successful'];
+        return ['success' => (bool)$ok, 'message' => 'Logout successful'];
     }
 
     public static function anonymous_login(array $params): array
     {
         $deviceUUID = $params['device_uuid'] ?? null;
         $deviceName = $params['device_name'] ?? 'Unknown Device';
-        $platform = $params['platform'] ?? 'unknown';
+        $platform   = $params['platform'] ?? 'unknown';
+        $osVersion  = $params['os_version'] ?? null;
+        $appVersion = $params['app_version'] ?? null;
 
         if (!$deviceUUID) {
-            return ['success' => false, 'message' => 'Cihaz UUID gerekli.'];
+            return ['success' => false, 'message' => 'device_uuid is required'];
         }
 
-        // CRUD örneği oluştur
-        self::init(null); // kullanıcı henüz yok
+        self::init(null);
+        $existingDevice = self::$crud->read('user_devices', [
+            'device_uuid' => $deviceUUID,
+            'is_active'   => 1
+        ], false);
 
-        // Daha önce kayıtlı mı?
-        $existingDevice = self::$crud->read('user_devices', ['device_uuid' => $deviceUUID], false);
+        $config = require __DIR__ . '/../config/config.php';
 
         if ($existingDevice) {
-            $userId = $existingDevice['user_id'];
-            $user = self::$crud->read('users', ['id' => $userId], false);
+            $userId = (int)$existingDevice['user_id'];
+            $user   = self::$crud->read('users', ['id' => $userId], false);
             if (!$user) {
-                return ['success' => false, 'message' => 'Kullanıcı bulunamadı.'];
+                return ['success' => false, 'message' => 'User not found.'];
             }
-            $config = require __DIR__ . '/../config/config.php';
-            $token = JWT::encode([
-                'user_id' => $user['id'],
-                'email' => $user['email']
-            ], $config['jwt']['secret'], $config['jwt']['expiration']);
 
+            $token = JWT::encode([
+                'user_id' => $userId,
+                'email'   => (string)($user['email'] ?? ''),
+            ], $config['jwt']['secret'], $config['jwt']['expiration']);
 
             return [
                 'success' => true,
-                'message' => 'Anonim kullanıcı bulundu.',
-                'token' => $token,
-                'user' => [
-                    'id' => $user['id'],
-                    'name' => $user['name'],
-                    'email' => $user['email'],
-                    'role' => $user['role_id'] ?? null,
-                ]
+                'message' => 'Anonymous device recognized.',
+                'token'   => $token,
+                'user'    => [
+                    'id'    => $userId,
+                    'name'  => $user['name'] ?? 'Anonymous',
+                    'email' => $user['email'] ?? '',
+                    'role'  => $user['role_id'] ?? null,
+                ],
             ];
         }
 
-        // Yeni kullanıcı oluştur
-        $newUserData = [
-            'name' => 'Anonymous',
-            'surname' => 'User',
-            'email' => self::generateAnonymousEmail(),
-            'password' => 'anonymous',
-            'created_at' => date('Y-m-d H:i:s'),
-        ];
+        // Yeni anonim kullanıcı
+        $anonEmail = 'anon_' . bin2hex(random_bytes(8)) . '@seaofsea.com';
+        $hashed    = password_hash('anonymous', PASSWORD_BCRYPT);
 
-        $userId = self::$crud->create('users', $newUserData);
-
-        if (!$userId) {
-            return ['success' => false, 'message' => 'Kullanıcı oluşturulamadı.'];
-        }
-
-        // Device kaydı
-        self::init($userId);
-        $deviceCreated = self::$crud->create('user_devices', [
-            'user_id' => $userId,
-            'device_uuid' => $deviceUUID,
-            'device_name' => $deviceName,
-            'platform' => $platform,
-            'created_at' => date('Y-m-d H:i:s'),
+        $userId = self::$crud->create('users', [
+            'name'        => 'Anonymous',
+            'surname'     => 'User',
+            'email'       => $anonEmail,
+            'password'    => $hashed,
+            'is_verified' => 0,
+            'role_id'     => 3,
+            'created_at'  => date('Y-m-d H:i:s'),
         ]);
 
-        if (!$deviceCreated) {
-            return ['success' => false, 'message' => 'Cihaz kaydedilemedi.'];
+        if (!$userId) {
+            return ['success' => false, 'message' => 'Failed to create anonymous user.'];
         }
-        $config = require __DIR__ . '/../config/config.php';
+
+        $refreshToken = bin2hex(random_bytes(32));
+        self::init($userId);
+        $ok = self::$crud->create('user_devices', [
+            'user_id'       => $userId,
+            'device_uuid'   => $deviceUUID,
+            'device_name'   => $deviceName,
+            'platform'      => $platform,
+            'os_version'    => $osVersion,
+            'app_version'   => $appVersion,
+            'refresh_token' => $refreshToken,
+            'is_active'     => 1,
+            'remember_me'   => 1,
+            'last_used_at'  => date('Y-m-d H:i:s'),
+            'created_at'    => date('Y-m-d H:i:s'),
+            'expires_at'    => date('Y-m-d H:i:s', strtotime('+30 days')),
+        ]);
+
+        if (!$ok) {
+            return ['success' => false, 'message' => 'Failed to bind device.'];
+        }
+
         $token = JWT::encode([
-            'user_id' => $user['id'],
-            'email' => $user['email']
+            'user_id' => $userId,
+            'email'   => $anonEmail,
         ], $config['jwt']['secret'], $config['jwt']['expiration']);
 
-
         return [
-            'success' => true,
-            'message' => 'Yeni anonim kullanıcı oluşturuldu.',
-            'token' => $token,
-            'user' => [
-                'id' => $userId,
-                'name' => 'Anonymous',
-                'email' => $newUserData['email'],
-                'role' => null,
-            ]
+            'success'       => true,
+            'message'       => 'Anonymous user created.',
+            'token'         => $token,
+            'refresh_token' => $refreshToken,
+            'user'          => [
+                'id'    => (int)$userId,
+                'name'  => 'Anonymous',
+                'email' => $anonEmail,
+                'role'  => 3,
+            ],
         ];
     }
 
@@ -513,8 +522,64 @@ class AuthHandler
             Logger::info("Reset email sent to $email");
             Response::success("Password reset email sent successfully to $email.");
         } catch (Exception $e) {
-            Logger::error("Reset email error", ['error' => $e->getMessage()]);
+            Logger::exception("Reset email error", ['error' => $e->getMessage()]);
             Response::error("Unexpected error during email sending.", 500);
         }
+    }
+    public static function change_password(array $params): array
+    {
+        $auth = Auth::requireAuth();
+        // E-posta doğrulaması + (Gate tarafında blok kontrolünüz varsa) blok kontrolü
+        Gate::checkVerified();
+
+        $userId  = (int)$auth['user_id'];
+        $current = trim((string)($params['current_password'] ?? ''));
+        $new     = trim((string)($params['new_password'] ?? ''));
+
+        if ($current === '' || $new === '') {
+            return ['success' => false, 'message' => 'Both current and new passwords are required.'];
+        }
+        if (strlen($new) < 8) {
+            return ['success' => false, 'message' => 'New password must be at least 8 characters.'];
+        }
+
+        $crud = new Crud($userId);
+        $user = $crud->read('users', ['id' => $userId], false);
+        if (!$user) {
+            return ['success' => false, 'message' => 'User not found'];
+        }
+
+        // İsteğe bağlı: blocked_until kontrolü (Gate::checkVerified içine de almış olabiliriz)
+        if (!empty($user['blocked_until']) && strtotime((string)$user['blocked_until']) > time()) {
+            return ['success' => false, 'message' => "Your account is blocked until {$user['blocked_until']}"];
+        }
+
+        if (empty($user['password']) || !password_verify($current, (string)$user['password'])) {
+            return ['success' => false, 'message' => 'Current password is incorrect.'];
+        }
+
+        if (password_verify($new, (string)$user['password'])) {
+            return ['success' => false, 'message' => 'New password cannot be the same as the current password.'];
+        }
+
+        $hashed = password_hash($new, PASSWORD_BCRYPT);
+        $ok = $crud->update('users', ['password' => $hashed], ['id' => $userId]);
+        if (!$ok) {
+            return ['success' => false, 'message' => 'Password update failed.'];
+        }
+
+        // Tüm cihazlardan çıkış: user_devices kayıtlarını pasif et
+        // (tablonuz yoksa bu bloğu atlayabilirsiniz)
+        try {
+            $crud->update('user_devices', [
+                'is_active'  => 0,
+                'expires_at' => date('Y-m-d H:i:s'),
+            ], ['user_id' => $userId]);
+        } catch (\Throwable $e) {
+            // sessiz geçebiliriz; şifre değişti, cihaz temizliği kısmı opsiyonel
+            Logger::error('Logout all after password change failed', ['e' => $e->getMessage()]);
+        }
+
+        return ['success' => true];
     }
 }

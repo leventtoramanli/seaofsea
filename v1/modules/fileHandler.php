@@ -26,6 +26,7 @@ class FileHandler
         $rename = $options['rename'] ?? true;
         $prefix = $options['prefix'] ?? '';
         $resize = $options['resize'] ?? false;
+        $addWatermark = $options['addWatermark'] ?? false;
         $maxWidth = $options['maxWidth'] ?? 1920;
         $maxHeight = $options['maxHeight'] ?? 1920;
 
@@ -48,8 +49,8 @@ class FileHandler
         $targetPath = $folderPath . $safeName;
 
         $moveSuccess = is_uploaded_file($file['tmp_name'])
-    ? move_uploaded_file($file['tmp_name'], $targetPath)
-    : copy($file['tmp_name'], $targetPath);
+        ? move_uploaded_file($file['tmp_name'], $targetPath)
+        : copy($file['tmp_name'], $targetPath);
 
         if ($moveSuccess) {
             // 🔧 Resimse ve resize istendiyse
@@ -61,6 +62,10 @@ class FileHandler
 
                 $targetPath = $resizedPath;
                 $safeName = basename($resizedPath);
+
+                if ($addWatermark) {
+                    $this->applyWatermark($targetPath);
+                }
             }
 
             return [
@@ -167,4 +172,41 @@ class FileHandler
         self::$logger->error($message, $details);
         return ['success' => false, 'error' => $message];
     }
+    private function applyWatermark(string $path): void
+    {
+        $info = getimagesize($path);
+        if (!$info) return;
+
+        [$width, $height] = $info;
+        $mime = $info['mime'];
+
+        switch ($mime) {
+            case 'image/jpeg': $img = imagecreatefromjpeg($path); break;
+            case 'image/png':  $img = imagecreatefrompng($path); break;
+            default: return;
+        }
+
+        // Yazı ayarları
+        $text = 'SeaOfSea';
+        $fontSize = 12;
+        $textColor = imagecolorallocate($img, 255, 255, 255); // beyaz
+        $margin = 10;
+
+        // Yazı konumu
+        $x = $margin;
+        $y = $height - $margin;
+
+        // Basit yazı (TTF font istenirse imagettftext ile yapılabilir)
+        imagestring($img, 2, $x, $y, $text, $textColor);
+
+        // Görseli üzerine yaz ve kaydet
+        if ($mime === 'image/jpeg') {
+            imagejpeg($img, $path, 90);
+        } elseif ($mime === 'image/png') {
+            imagepng($img, $path);
+        }
+
+        imagedestroy($img);
+    }
+
 }
