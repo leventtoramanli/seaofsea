@@ -25,4 +25,18 @@ class Response
         ]);
         exit;
     }
+
+    public static function fail(string $message = 'Error', int $code = 400, $data = []): array
+    {
+        // HTTP durum kodunu da ayarlamak istersen:
+        if (!headers_sent()) {
+            http_response_code($code);
+        }
+
+        return [
+            'success' => false,
+            'message' => $message,
+            'data'    => $data,
+        ];
+    }
 }

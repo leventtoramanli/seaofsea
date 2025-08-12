@@ -192,6 +192,16 @@ class Crud
             return false;
         }
     }
+    
+    private static function isAssoc(array $arr): bool
+    {
+        return array_keys($arr) !== range(0, count($arr) - 1);
+    }
+
+    /** küçük yardımcı: dizinin asosiatif olup olmadığını kontrol */
+    function is_assoc(array $arr): bool {
+        return array_keys($arr) !== range(0, count($arr) - 1);
+    }
 
     public function read(
     string $table,
@@ -313,24 +323,25 @@ class Crud
         if (!empty($whereParts)) {
             $sql .= ' WHERE ' . implode(' AND ', $whereParts);
         }
-
         // --- GROUP BY ---
         if (!empty($groupBy)) {
-            // groupBy: ['country','iso3'] veya ['country' => 'ASC'] (direction yok sayılır)
-            $groupCols = array_values(array_map(fn($c) => (string)$c, array_keys(is_assoc($groupBy) ? $groupBy : array_flip($groupBy))));
-            $sql .= ' GROUP BY ' . implode(', ', array_map(fn($c) => $c, $groupCols));
+            // associative mi? (['col'=>'ASC']) yoksa liste mi? (['col','col2'])
+            $isAssoc = array_keys($groupBy) !== range(0, count($groupBy) - 1);
+            $groupCols = $isAssoc ? array_keys($groupBy) : array_values($groupBy);
+            $sql .= ' GROUP BY ' . implode(', ', $groupCols);
         }
-
         // --- ORDER BY ---
         if (!empty($orderBy)) {
-            // orderBy: ['country' => 'ASC', 'name' => 'DESC'] veya [['column'=>'country','direction'=>'ASC']]
             $parts = [];
-            if (is_assoc($orderBy)) {
+            $isAssoc = array_keys($orderBy) !== range(0, count($orderBy) - 1);
+            if ($isAssoc) {
+                // ['country' => 'ASC', 'name' => 'DESC']
                 foreach ($orderBy as $col => $dir) {
                     $dir = strtoupper((string)$dir) === 'DESC' ? 'DESC' : 'ASC';
                     $parts[] = "{$col} {$dir}";
                 }
             } else {
+                // [['column'=>'country','direction'=>'ASC'], ...]
                 foreach ($orderBy as $o) {
                     $col = $o['column'] ?? null;
                     if (!$col) continue;
@@ -378,11 +389,6 @@ class Crud
             ]);
             return false;
         }
-    }
-
-    /** küçük yardımcı: dizinin asosiatif olup olmadığını kontrol */
-    function is_assoc(array $arr): bool {
-        return array_keys($arr) !== range(0, count($arr) - 1);
     }
 
     public function update(string $table, array $data, array $conditions): bool

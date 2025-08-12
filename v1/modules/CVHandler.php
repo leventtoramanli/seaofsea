@@ -47,9 +47,9 @@ class CVHandler
             'address'            => $cv['address'] ?? '',
             'zip_code'           => $cv['zip_code'] ?? '',
             // >>> ŞU ÜÇÜ STRING JSON KALSIN
-            'phone'              => is_string($cv['phone']  ?? '') ? $cv['phone']  : json_encode($cv['phone']  ?? []),
-            'email'              => is_string($cv['email']  ?? '') ? $cv['email']  : json_encode($cv['email']  ?? []),
-            'social'             => is_string($cv['social'] ?? '') ? $cv['social'] : json_encode($cv['social'] ?? []),
+            'phone'  => (is_string($cv['phone'] ?? null)  && trim($cv['phone'])  !== '') ? $cv['phone']  : '[]',
+            'email'  => (is_string($cv['email'] ?? null)  && trim($cv['email'])  !== '') ? $cv['email']  : '[]',
+            'social' => (is_string($cv['social'] ?? null) && trim($cv['social']) !== '') ? $cv['social'] : '[]',
 
             // Bunlar string JSON da olabilir, dizi de olabilir; Flutter her iki duruma toleranslı.
             'language'           => $cv['language'] ?? '[]',
@@ -97,7 +97,12 @@ class CVHandler
 
         // >>> STRING JSON olsun
         foreach (['phone','email','social'] as $k) {
-            $cv[$k] = is_string($cv[$k] ?? '') ? $cv[$k] : json_encode($cv[$k] ?? []);
+            $v = $cv[$k] ?? null;
+            if (is_string($v) && trim($v) !== '') {
+                $cv[$k] = $v;
+            } else {
+                $cv[$k] = '[]';
+            }
         }
 
         // Diğer büyük alanları da varsa string JSON default’la:
@@ -176,6 +181,19 @@ class CVHandler
             $params = reset($params);
         }
 
+        if (($params['type'] ?? '') === 'stcw_certificates') {
+            if (isset($params['data'])) {
+                $params['stcw_certificates'] = $params['data'];
+            } elseif (isset($params['certificates'])) {
+                $params['stcw_certificates'] = $params['certificates'];
+            }
+            unset($params['type'], $params['data']);
+        }
+        if (($params['pathName'] ?? '') === 'stcw_certificates' && isset($params['certificates'])) {
+            $params['stcw_certificates'] = $params['certificates'];
+            unset($params['pathName']);
+        }
+
         $allowed = [
             'basic_info','professional_title',
             'country_id','city_id','address','zip_code',
@@ -200,15 +218,30 @@ class CVHandler
             unset($data['contact']);
         }
 
+        // nested payload düzleştirme (Flutter uyumu)
+        foreach (['education','work_experience','language','skills','references','certificates'] as $k) {
+            if (isset($data[$k]) && is_array($data[$k]) && array_key_exists($k, $data[$k])) {
+                $data[$k] = $data[$k][$k]; // sadece içteki listeyi al
+            }
+        }
         // stcw_certificates fallback -> certificates
-        if (!isset($data['certificates']) && isset($data['stcw_certificates']['certificates'])) {
-            $data['certificates'] = self::toJson($data['stcw_certificates']['certificates']);
+        if (!isset($data['certificates']) && isset($data['stcw_certificates'])) {
+            $sc = $data['stcw_certificates'];
+            if (is_array($sc) && array_key_exists('certificates', $sc)) {
+                $data['certificates'] = self::toJson($sc['certificates']);
+            } elseif (is_array($sc)) {
+                $data['certificates'] = self::toJson($sc); // doğrudan liste geldiyse
+            }
             unset($data['stcw_certificates']);
         }
 
         // JSON alanlar
         foreach (['phone','email','social','language','education','work_experience','skills','certificates','seafarer_info','references'] as $k) {
             if (isset($data[$k]) && is_array($data[$k])) {
+                $data[$k] = array_values(array_filter(
+                    array_map(fn($x) => is_string($x) ? trim($x) : $x, $data[$k]),
+                    fn($x) => $x !== '' && $x !== null
+                ));
                 $data[$k] = self::toJson($data[$k]);
             }
         }
@@ -217,12 +250,14 @@ class CVHandler
         if (isset($data['basic_info']))         $data['basic_info'] = (string)$data['basic_info'];
         if (isset($data['professional_title'])) $data['professional_title'] = trim((string)$data['professional_title']);
 
-        if (empty($data)) return Response::fail('No valid CV fields provided', 400);
+        if (empty($data)) {
+            return ['success' => false, 'message' => 'No valid CV fields provided', 'data' => []];
+        }
 
         $exists = $crud->read('user_cv', ['user_id' => $userId], fetchAll: false);
         if ($exists) {
             $data['updated_at'] = date('Y-m-d H:i:s');
-            $crud->update('user_cv', ['user_id' => $userId], $data);
+            $crud->update('user_cv', $data, ['user_id' => $userId]);
         } else {
             $data['user_id'] = $userId;
             $data['created_at'] = date('Y-m-d H:i:s');

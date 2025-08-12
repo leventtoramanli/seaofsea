@@ -1,6 +1,6 @@
 <?php
 
-define('RATE_LIMIT_MAX_REQUESTS', 20); // Örn: 60 saniyede 20 istek
+define('RATE_LIMIT_MAX_REQUESTS', 60); // Örn: 60 saniyede 20 istek
 define('RATE_LIMIT_WINDOW_SECONDS', 60);
 define('RATE_LIMIT_STORAGE_PATH', __DIR__ . '/../storage/rate_limits/');
 
