@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/Auth.php';
+require_once __DIR__ . '/Crud.php';
 require_once __DIR__ . '/PermissionService.php';
 require_once __DIR__ . '/Response.php';
 

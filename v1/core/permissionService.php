@@ -10,10 +10,10 @@ class PermissionService
     private static function initCrud(int $userId): void
     {
         if (!isset(self::$crud)) {
-            self::$crud = new Crud($userId);
+            self::$crud = new Crud($userId, false);
         } else {
             // aynı request içinde farklı user için çağrılırsa
-            self::$crud = new Crud($userId);
+            self::$crud = new Crud($userId, false);
         }
     }
 

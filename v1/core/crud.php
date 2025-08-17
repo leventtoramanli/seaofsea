@@ -14,55 +14,56 @@ class Crud
         'admin_only_stuff',
     ];
 
-    public function __construct(int $userId = null)
+    /** PermissionService gibi yerlerde RBAC’i bypass etmek için küçük guard */
+    private bool $permissionGuard = true;
+
+    // ⬇⬇⬇  IMZAYI DÜZELTTİK: ikinci parametre eklendi
+    public function __construct(?int $userId = null, bool $permissionGuard = true)
     {
         $this->pdo = DB::getInstance();
         $this->logger = Logger::getInstance();
         $this->userId = $userId;
+        $this->permissionGuard = $permissionGuard; // tanımsız değişken hatası gider
     }
 
     private function isAllowedTable(string $table, ?string $action = null): bool
     {
         $hardBlocked = ['migrations', 'logs', 'sensitive_data'];
-        if (in_array($table, $hardBlocked)) {
+        if (in_array($table, $hardBlocked, true)) {
             return false;
         }
 
         try {
             $stmt = $this->pdo->prepare("
-            SELECT * FROM public_access_rules 
-            WHERE table_name = :table AND is_enabled = 1
-            LIMIT 1
-        ");
+                SELECT * FROM public_access_rules 
+                WHERE table_name = :table AND is_enabled = 1
+                LIMIT 1
+            ");
             $stmt->execute(['table' => $table]);
             $rule = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            // Kural yoksa, bu tabloya herkes erişebilir
             if (!$rule) {
                 return true;
             }
 
-            // Eğer sadece belli userlar erişebilsin denmişse
             if ((int)$rule['is_restricted'] === 1) {
                 if (!$this->userId) {
                     return false;
                 }
-
-                $userIds = json_decode($rule['user_ids'], true);
-                if (!is_array($userIds) || !in_array($this->userId, $userIds)) {
+                $userIds = json_decode($rule['user_ids'] ?? '[]', true) ?: [];
+                if (!in_array($this->userId, $userIds, true)) {
                     return false;
                 }
             }
 
-            // Eğer sadece belli aksiyonlara izin verilmişse
             if (!empty($action) && !empty($rule['allowed_actions'])) {
-                $allowedActions = array_map('trim', explode(',', strtolower($rule['allowed_actions'])));
-                if (!in_array(strtolower($action), $allowedActions)) {
+                $allowedActions = array_map('trim', explode(',', strtolower((string)$rule['allowed_actions'])));
+                if (!in_array(strtolower($action), $allowedActions, true)) {
                     return false;
                 }
             }
 
-            return true; // tüm kontroller geçti, erişime izin ver
+            return true;
         } catch (PDOException $e) {
             Logger::error("ACCESS_CHECK failed", [
                 'table' => $table,
@@ -72,7 +73,6 @@ class Crud
             return false;
         }
     }
-
 
     private function getTableColumns(string $table): array
     {
@@ -96,37 +96,56 @@ class Crud
 
     private function isValidColumn(string $table, string $column): bool
     {
+        // Şimdilik davranışı bozmayalım:
         return true;
-        if (in_array($table, $this->disallowedTables)) {
+
+        // Güvenliği sıkmak istediğinde yukarıdaki 'return true' satırını kaldır,
+        // ve aşağıyı aktif et.
+        /*
+        if (in_array($table, $this->disallowedTables, true)) {
             return false;
         }
         $columns = $this->getTableColumns($table);
-        return in_array($column, $columns);
+        return in_array($column, $columns, true);
+        */
     }
 
     private function isPublicAccess(string $table, string $action): bool
     {
-        return true;
-        if (!$this->isAllowedTable($table)) {
+        if (!$this->isAllowedTable($table, $action)) {
             return false;
         }
-        $sql = "SELECT allowed_actions, user_ids, is_enabled, is_restricted FROM public_access_rules WHERE table_name = :table LIMIT 1";
+
+        $sql = "SELECT allowed_actions, user_ids, is_enabled, is_restricted 
+                FROM public_access_rules 
+                WHERE table_name = :table 
+                LIMIT 1";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute(['table' => $table]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!$row || !$row['is_enabled']) {
+        if (!$row || (int)$row['is_enabled'] !== 1) {
             return false;
         }
 
-        $actions = json_decode($row['allowed_actions'], true) ?? [];
-        if (!in_array($action, $actions)) {
+        $allowed = [];
+        if ($row['allowed_actions'] !== null) {
+            $decoded = json_decode($row['allowed_actions'], true);
+            if (is_array($decoded)) {
+                $allowed = array_map('strtolower', $decoded);
+            } else {
+                $allowed = array_map('strtolower', array_map('trim', explode(',', (string)$row['allowed_actions'])));
+            }
+        }
+
+        if ($allowed && !in_array(strtolower($action), $allowed, true)) {
             return false;
         }
 
-        if ($row['is_restricted']) {
-            $allowedUsers = json_decode($row['user_ids'], true);
-            return is_array($allowedUsers) && in_array($this->userId, $allowedUsers);
+        if ((int)$row['is_restricted'] === 1) {
+            if (!$this->userId) return false;
+            $allowedUsers = json_decode($row['user_ids'] ?? '[]', true) ?: [];
+            return in_array($this->userId, $allowedUsers, true);
         }
 
         return true;
@@ -134,11 +153,14 @@ class Crud
 
     private function hasPermission(string $action, string $table): bool
     {
-        return true;
+        // PermissionService içinde guard'ı kapatacağız
+        if ($this->permissionGuard === false) return true;
+
         if (!$this->isAllowedTable($table)) {
             return false;
         }
 
+        // Public access kuralı varsa ve anonim istekse izin ver
         if (!$this->userId && $this->isPublicAccess($table, $action)) {
             return true;
         }
@@ -152,17 +174,18 @@ class Crud
             return false;
         }
 
-        $sql = "SELECT COUNT(*) FROM permissions WHERE code = :code";
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['code' => "$table.$action"]);
-        $count = (int) $stmt->fetchColumn();
+        $stmt = $this->pdo->prepare("SELECT COUNT(*) FROM permissions WHERE code = :code");
+        $stmt->execute(['code' => "{$table}.{$action}"]);
+        $count = (int)$stmt->fetchColumn();
 
         if ($count === 0) {
+            // izin tanımlı değilse default allow (mevcut davranışı bozmayalım)
             return true;
         }
 
         return AuthService::can($this->userId, $action, $table);
     }
+
     public function create(string $table, array $data): int|false
     {
         if (!$this->isAllowedTable($table) || !$this->hasPermission('create', $table)) {
@@ -175,7 +198,7 @@ class Crud
             }
         }
 
-        $columnsStr = implode(', ', array_keys($data));
+        $columnsStr = implode(', ', array_map(fn($k) => "`$k`", array_keys($data)));
         $placeholders = implode(', ', array_map(fn ($k) => ':' . $k, array_keys($data)));
         $sql = "INSERT INTO `$table` ($columnsStr) VALUES ($placeholders)";
 
@@ -192,34 +215,32 @@ class Crud
             return false;
         }
     }
-    
+
     private static function isAssoc(array $arr): bool
     {
         return array_keys($arr) !== range(0, count($arr) - 1);
     }
 
-    /** küçük yardımcı: dizinin asosiatif olup olmadığını kontrol */
+    // (opsiyonel) gerek yoksa bu helper'ı kaldırabilirsin
     function is_assoc(array $arr): bool {
         return array_keys($arr) !== range(0, count($arr) - 1);
     }
 
     public function read(
-    string $table,
-    array $conditions = [],
-    array|bool $columnsOrFetchAll = ['*'],
-    bool $fetchAll = true,
-    array $orderBy = [],
-    array $groupBy = [],
-    array $options = []
+        string $table,
+        array $conditions = [],
+        array|bool $columnsOrFetchAll = ['*'],
+        bool $fetchAll = true,
+        array $orderBy = [],
+        array $groupBy = [],
+        array $options = []
     ): mixed {
         if (!$this->isAllowedTable($table) || !$this->hasPermission('read', $table)) {
             return false;
         }
 
-        // --- Geri uyum & kolon listesi ---
         $columns = ['*'];
         if (is_bool($columnsOrFetchAll)) {
-            // Eski kullanım: read('users', ['id'=>1], false)
             $fetchAll = $columnsOrFetchAll;
         } elseif (is_array($columnsOrFetchAll) && !empty($columnsOrFetchAll)) {
             $columns = $columnsOrFetchAll;
@@ -228,15 +249,6 @@ class Crud
 
         $sql = "SELECT {$select} FROM `{$table}`";
 
-        // --- WHERE builder (operatör destekli) ---
-        // Desteklenen formatlar:
-        //  ['col' => 'val']                => col = :col
-        //  ['col' => ['IN', [1,2,3]]]      => col IN (:col_0,:col_1,:col_2)
-        //  ['col' => ['NOT IN', [...]]]
-        //  ['col' => ['LIKE', '%foo%']]
-        //  ['col' => ['>', 10]], ['<=', ...], ['!=', ...]
-        //  ['col' => ['BETWEEN', [$from, $to]]]
-        //  ['col' => ['IS NULL']] / ['IS NOT NULL']
         $whereParts = [];
         $params = [];
         $idx = 0;
@@ -246,7 +258,6 @@ class Crud
                 return false;
             }
 
-            // Normal eşitlik
             if (!is_array($val)) {
                 $ph = ":{$col}";
                 $whereParts[] = "`{$col}` = {$ph}";
@@ -254,14 +265,12 @@ class Crud
                 continue;
             }
 
-            // Operatörlü kullanım
             $op = strtoupper((string)($val[0] ?? ''));
             switch ($op) {
                 case 'IN':
                 case 'NOT IN':
                     $list = (array)($val[1] ?? []);
                     if (empty($list)) {
-                        // IN () boş ise her zaman false döner; güvenli yaklaşım:
                         $whereParts[] = ($op === 'IN') ? '1=0' : '1=1';
                         break;
                     }
@@ -311,7 +320,6 @@ class Crud
                     break;
 
                 default:
-                    // Tanınmayan operatör -> eşitlik gibi davran
                     $ph = ":{$col}_eq_{$idx}";
                     $whereParts[] = "`{$col}` = {$ph}";
                     $params["{$col}_eq_{$idx}"] = $val[1] ?? null;
@@ -323,30 +331,32 @@ class Crud
         if (!empty($whereParts)) {
             $sql .= ' WHERE ' . implode(' AND ', $whereParts);
         }
-        // --- GROUP BY ---
+
         if (!empty($groupBy)) {
-            // associative mi? (['col'=>'ASC']) yoksa liste mi? (['col','col2'])
             $isAssoc = array_keys($groupBy) !== range(0, count($groupBy) - 1);
             $groupCols = $isAssoc ? array_keys($groupBy) : array_values($groupBy);
-            $sql .= ' GROUP BY ' . implode(', ', $groupCols);
+            foreach ($groupCols as $gc) {
+                if (!$this->isValidColumn($table, $gc)) {
+                    return false;
+                }
+            }
+            $sql .= ' GROUP BY ' . implode(', ', array_map(fn($c) => "`{$c}`", $groupCols));
         }
-        // --- ORDER BY ---
+
         if (!empty($orderBy)) {
             $parts = [];
             $isAssoc = array_keys($orderBy) !== range(0, count($orderBy) - 1);
             if ($isAssoc) {
-                // ['country' => 'ASC', 'name' => 'DESC']
                 foreach ($orderBy as $col => $dir) {
                     $dir = strtoupper((string)$dir) === 'DESC' ? 'DESC' : 'ASC';
-                    $parts[] = "{$col} {$dir}";
+                    $parts[] = "`{$col}` {$dir}";
                 }
             } else {
-                // [['column'=>'country','direction'=>'ASC'], ...]
                 foreach ($orderBy as $o) {
                     $col = $o['column'] ?? null;
-                    if (!$col) continue;
+                    if (!$col || !$this->isValidColumn($table, $col)) continue;
                     $dir = strtoupper((string)($o['direction'] ?? 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
-                    $parts[] = "{$col} {$dir}";
+                    $parts[] = "`{$col}` {$dir}";
                 }
             }
             if ($parts) {
@@ -354,7 +364,6 @@ class Crud
             }
         }
 
-        // --- LIMIT/OFFSET (options) ---
         $limit  = $options['limit']  ?? null;
         $offset = $options['offset'] ?? null;
         if ($limit !== null) {
@@ -368,8 +377,6 @@ class Crud
 
         try {
             $stmt = $this->pdo->prepare($sql);
-
-            // Tip güvenli bind
             foreach ($params as $k => $v) {
                 $type = is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR;
                 $stmt->bindValue(':' . $k, $v, $type);
@@ -377,7 +384,7 @@ class Crud
 
             $stmt->execute();
             return $fetchAll ? $stmt->fetchAll(PDO::FETCH_ASSOC)
-                            : $stmt->fetch(PDO::FETCH_ASSOC);
+                             : $stmt->fetch(PDO::FETCH_ASSOC);
 
         } catch (PDOException $e) {
             Logger::error("READ failed in {$table}", [
@@ -410,26 +417,15 @@ class Crud
 
         $sql = "UPDATE `$table` SET $setClause WHERE $whereClause";
         $params = [];
-        foreach ($data as $k => $v) {
-            $params["set_$k"] = $v;
-        }
-        foreach ($conditions as $k => $v) {
-            $params["where_$k"] = $v;
-        }
+        foreach ($data as $k => $v) { $params["set_$k"] = $v; }
+        foreach ($conditions as $k => $v) { $params["where_$k"] = $v; }
 
         try {
             $stmt = $this->pdo->prepare($sql);
             $executed = $stmt->execute($params);
-            $affectedRows = $stmt->rowCount();
 
-            Logger::info('✅ Update executed', [
-                'sql' => $sql,
-                'params' => $params,
-                'executed' => $executed,
-                'affectedRows' => $affectedRows
-            ]);
-
-            return $executed && $affectedRows > 0;
+            // idempotent dönelim (0 row affected olsa da true)
+            return (bool)$executed;
         } catch (PDOException $e) {
             Logger::error("❌ UPDATE failed in $table", [
                 'error' => $e->getMessage(),
@@ -452,12 +448,12 @@ class Crud
             }
         }
 
-        $whereClause = implode(' AND ', array_map(fn ($k) => "$k = :$k", array_keys($conditions)));
+        $whereClause = implode(' AND ', array_map(fn ($k) => "`$k` = :$k", array_keys($conditions)));
         $sql = "DELETE FROM `$table` WHERE $whereClause";
 
         try {
             $stmt = $this->pdo->prepare($sql);
-            return $stmt->execute($conditions);
+            return (bool)$stmt->execute($conditions);
         } catch (PDOException $e) {
             Logger::error("DELETE failed in $table", [
                 'error' => $e->getMessage(),

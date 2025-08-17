@@ -194,42 +194,65 @@ class AuthHandler
             return ['valid' => false, 'message' => 'Token verification failed'];
         }
     }
+    // AuthHandler.php
     public static function logout(array $params): array
     {
-        // Kimlik doğrulama header'ından kullanıcıyı al
-        $auth = Auth::requireAuth();
-        $userId = (int)$auth['user_id'];
-        $crud = new Crud($userId);
+        // 1) Bearer varsa ve geçerliyse o yoldan
+        $auth = Auth::check(); // requireAuth DEĞİL
+        $allDevices   = !empty($params['all_devices']) || !empty($params['allDevices']);
+        $deviceUUID   = $params['device_uuid'] ?? null;
+        $refreshToken = $params['refresh_token'] ?? null;
 
-        $allDevices = !empty($params['all_devices']) || !empty($params['allDevices']);
-        $deviceUUID = $params['device_uuid'] ?? null;
+        if ($auth) {
+            $userId = (int)$auth['user_id'];
+            $crud = new Crud($userId);
 
-        if ($allDevices) {
-            // Tüm cihazlardan çıkış
-            $ok = $crud->update('user_devices', [
-                'is_active'   => 0,
-                'expires_at'  => date('Y-m-d H:i:s'),
-                'refresh_token' => null,
-            ], ['user_id' => $userId]);
+            if ($allDevices) {
+                $crud->update('user_devices', [
+                    'is_active'=>0,'expires_at'=>date('Y-m-d H:i:s'),'refresh_token'=>null
+                ], ['user_id'=>$userId]);
+                return ['success'=>true,'message'=>'Logout from all devices successful'];
+            }
 
-            return ['success' => (bool)$ok, 'message' => 'Logout from all devices successful'];
+            if (!$deviceUUID) return ['success'=>false,'message'=>'Missing device UUID'];
+
+            $crud->update('user_devices', [
+                'is_active'=>0,'expires_at'=>date('Y-m-d H:i:s'),'refresh_token'=>null
+            ], ['user_id'=>$userId,'device_uuid'=>$deviceUUID]);
+
+            return ['success'=>true,'message'=>'Logout successful'];
         }
 
-        if (!$deviceUUID) {
-            return ['success' => false, 'message' => 'Missing device UUID'];
+        // 2) Bearer yoksa (expired vs.): refresh_token+device_uuid ile kapat
+        if ($refreshToken && $deviceUUID) {
+            $crud = new Crud(0);
+            $row = $crud->read('user_devices', [
+                'device_uuid'=>$deviceUUID,
+                'refresh_token'=>$refreshToken,
+                'is_active'=>1
+            ], false);
+
+            if ($row) {
+                $userId = (int)$row['user_id'];
+                $crud = new Crud($userId);
+
+                if ($allDevices) {
+                    $crud->update('user_devices', [
+                        'is_active'=>0,'expires_at'=>date('Y-m-d H:i:s'),'refresh_token'=>null
+                    ], ['user_id'=>$userId]);
+                    return ['success'=>true,'message'=>'Logout from all devices successful'];
+                }
+
+                $crud->update('user_devices', [
+                    'is_active'=>0,'expires_at'=>date('Y-m-d H:i:s'),'refresh_token'=>null
+                ], ['user_id'=>$userId,'device_uuid'=>$deviceUUID]);
+
+                return ['success'=>true,'message'=>'Logout via refresh token successful'];
+            }
         }
 
-        // Sadece bu cihazdan çıkış
-        $ok = $crud->update('user_devices', [
-            'is_active'   => 0,
-            'expires_at'  => date('Y-m-d H:i:s'),
-            'refresh_token' => null,
-        ], [
-            'user_id'     => $userId,
-            'device_uuid' => $deviceUUID,
-        ]);
-
-        return ['success' => (bool)$ok, 'message' => 'Logout successful'];
+        // 3) Zaten düşmüş/temizlenmiş → idempotent başarı
+        return ['success'=>true,'message'=>'No active session'];
     }
 
     public static function anonymous_login(array $params): array
