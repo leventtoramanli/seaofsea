@@ -149,7 +149,7 @@ class FileHandler
         return array_values(array_diff(scandir($path), ['.', '..']));
     }
 
-    private function createFolderPath(string $subFolder): string
+    public function createFolderPath(string $subFolder): string
     {
         return rtrim($this->baseUploadDir . ltrim($subFolder, '/'), '/') . '/';
     }

@@ -6,12 +6,9 @@ class Auth
     {
         $headers = function_exists('getallheaders') ? getallheaders() : [];
         $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? null;
-        Logger::info("Auth header: " . json_encode($authHeader));
-
         if ($authHeader && preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
             return $matches[1];
         }
-
         return null;
     }
 
@@ -25,12 +22,15 @@ class Auth
             return null;
         }
 
-        $payload = JWT::decode($token, $secret);
-        if (!$payload || !isset($payload['user_id'])) {
+        try {
+            $payload = JWT::decode($token, $secret);
+        } catch (\Throwable $e) {
             return null;
         }
+        if (!$payload || !isset($payload['user_id'])) return null;
+        if (isset($payload['exp']) && (int)$payload['exp'] < time()) return null;
 
-        return $payload; // örn: ['user_id' => 5, 'exp' => 1234567890]
+        return $payload;
     }
 
     public static function requireAuth(): array

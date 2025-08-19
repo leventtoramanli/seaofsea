@@ -42,6 +42,13 @@ class CompanyHandler
     public static function get_company_followers(array $p = []): array{ return self::followersList($p); }
     public static function follow_status(array $p = []): array { return self::followStatus($p); }
 
+    public static function set_member_position(array $p = []): array { return self::setMemberPosition($p); }
+    public static function sync_member_position_perms(array $p = []): array { return self::syncMemberPositionPerms($p); } // opsiyonel manuel senk
+
+    public static function set_member_role(array $p = []): array { return self::setMemberRole($p); }
+    public static function roles_list(array $p = []): array      { return self::rolesList($p); }
+    public static function sync_member_role_perms(array $p = []): array { return self::syncMemberRolePerms($p); }
+
     /* ================== LIST ================== */
     private static function listCompanies(array $p): array
     {
@@ -93,7 +100,7 @@ class CompanyHandler
             FROM companies c
             LEFT JOIN company_company_types cct ON cct.company_id=c.id
             LEFT JOIN company_types ct ON ct.id=cct.company_type_id
-            WHERE (:q IS NULL OR c.name LIKE CONCAT(:q, '%'))
+            WHERE (:q IS NULL OR c.name LIKE CONCAT('%', :q, '%'))
               AND (:a IS NULL OR c.active = :a)
               AND c.visibility = 'visible'
               AND c.deleted_at IS NULL
@@ -499,6 +506,12 @@ class CompanyHandler
                 updated_at = NOW()
         ";
         $ok = $crud->query($sql, [':u'=>$userId, ':c'=>$companyId, ':r'=>$roleId, ':rank'=>$rank]) !== false;
+        if($ok) {
+            if (isset($p['position_id'])) {
+                $pid = (int)$p['position_id'];
+                self::applyPositionDefaults($crud, $userId /*actor*/, $userId /*target self*/, $companyId, $pid);
+            }
+        }
         return ['ok' => (bool)$ok];
     }
 
@@ -920,5 +933,396 @@ class CompanyHandler
             ];
         }
         return $out;
+    }
+    private static function followStatus(array $p): array
+    {
+        $auth   = Auth::requireAuth();
+        $userId = (int)$auth['user_id'];
+        $crud   = new Crud($userId);
+
+        $cid = (int)($p['company_id'] ?? 0);
+        if ($cid <= 0) {
+            return ['is_follower' => false, 'follower_count' => 0, 'error' => 'company_id_required'];
+        }
+
+        // Takip ediyor mu?
+        $isFollower = (bool)$crud->query("
+            SELECT 1
+            FROM company_followers
+            WHERE company_id = :c AND user_id = :u AND unfollow IS NULL
+            LIMIT 1
+        ", [':c' => $cid, ':u' => $userId]);
+
+        // Aktif takipçi sayısı
+        $cnt = $crud->query("
+            SELECT COUNT(*) AS total
+            FROM company_followers
+            WHERE company_id = :c AND unfollow IS NULL
+        ", [':c' => $cid]);
+        $total = (int)($cnt[0]['total'] ?? 0);
+
+        return ['is_follower' => $isFollower, 'follower_count' => $total];
+        /*istemci çağrısı
+        {
+        "module": "company",
+        "action": "follow_status",
+        "params": { "company_id": 123, "device_uuid": "<uuid>" }
+        }
+        { "is_follower": true, "follower_count": 42 }
+        */
+    }
+    private static function setMemberPosition(array $p): array
+    {
+        $auth   = Auth::requireAuth();
+        $actor  = (int)$auth['user_id'];
+        $crud   = new Crud($actor);
+
+        $companyId   = (int)($p['company_id'] ?? 0);
+        $targetUser  = (int)($p['user_id']    ?? 0); // kimin pozisyonu güncellenecek
+        $positionId  = isset($p['position_id']) ? (int)$p['position_id'] : null; // null => pozisyonu temizle
+        $customName  = isset($p['custom_position_name']) ? trim((string)$p['custom_position_name']) : null;
+
+        if ($companyId <= 0 || $targetUser <= 0) {
+            return ['updated'=>false, 'error'=>'company_id_and_user_id_required'];
+        }
+
+        // yetki: şirket kurucusu || company-admin || company.members.update
+        $c = $crud->read('companies', ['id'=>$companyId], ['id','created_by'], false);
+        if (!$c) return ['updated'=>false, 'error'=>'company_not_found'];
+
+        $isCreator = (int)($c['created_by'] ?? 0) === $actor;
+        $isAdmin = (bool)$crud->query("
+            SELECT 1
+            FROM company_users cu
+            JOIN roles r ON r.id=cu.role_id
+            WHERE cu.user_id=:u AND cu.company_id=:c
+            AND r.scope='company' AND r.name='admin'
+            LIMIT 1
+        ", [':u'=>$actor, ':c'=>$companyId]);
+
+        $hasPerm = class_exists('PermissionService') && method_exists('PermissionService','hasPermission')
+            ? PermissionService::hasPermission($actor, 'company.members.update', $companyId)
+            : false;
+
+        if (!($isCreator || $isAdmin || $hasPerm)) {
+            return ['updated'=>false, 'error'=>'not_authorized'];
+        }
+
+        // hedef üye var mı?
+        $cu = $crud->read('company_users',
+            ['company_id'=>$companyId, 'user_id'=>$targetUser],
+            ['id','position_id','custom_position_name','status','is_active'],
+            false
+        );
+        if (!$cu) return ['updated'=>false, 'error'=>'member_not_found'];
+
+        // pozisyon doğrula (varsa)
+        if ($positionId !== null) {
+            $pos = $crud->read('company_positions', ['id'=>$positionId], ['id','name'], false);
+            if (!$pos) return ['updated'=>false, 'error'=>'position_not_found'];
+        }
+
+        // company_users güncelle
+        $upd = ['updated_at'=>date('Y-m-d H:i:s')];
+        $upd['position_id'] = $positionId; // null olabilir
+        if ($customName !== null) $upd['custom_position_name'] = $customName;
+
+        $ok = $crud->update('company_users', $upd, ['company_id'=>$companyId, 'user_id'=>$targetUser]);
+        if (!$ok) return ['updated'=>false, 'error'=>'db_update_failed'];
+
+        // pozisyona göre izinleri uygula
+        $sync = self::applyPositionDefaults($crud, $actor, $targetUser, $companyId, $positionId);
+
+        return ['updated'=>true, 'sync'=>$sync];
+    }
+    /* Manuel tetik (ör: pozisyon default izinleri değişti → herkese yeniden uygula) */
+    private static function syncMemberPositionPerms(array $p): array
+    {
+        $auth   = Auth::requireAuth();
+        $actor  = (int)$auth['user_id'];
+        $crud   = new Crud($actor);
+
+        $companyId  = (int)($p['company_id'] ?? 0);
+        $targetUser = (int)($p['user_id']    ?? 0);
+
+        if ($companyId <= 0 || $targetUser <= 0) {
+            return ['synced'=>false, 'error'=>'company_id_and_user_id_required'];
+        }
+
+        // aynı yetki kontrolü
+        $c = $crud->read('companies', ['id'=>$companyId], ['id','created_by'], false);
+        if (!$c) return ['synced'=>false, 'error'=>'company_not_found'];
+
+        $isCreator = (int)($c['created_by'] ?? 0) === $actor;
+        $isAdmin = (bool)$crud->query("
+            SELECT 1 FROM company_users cu
+            JOIN roles r ON r.id=cu.role_id
+            WHERE cu.user_id=:u AND cu.company_id=:c
+            AND r.scope='company' AND r.name='admin' LIMIT 1
+        ", [':u'=>$actor, ':c'=>$companyId]);
+
+        $hasPerm = class_exists('PermissionService') && method_exists('PermissionService','hasPermission')
+            ? PermissionService::hasPermission($actor, 'company.members.update', $companyId)
+            : false;
+
+        if (!($isCreator || $isAdmin || $hasPerm)) {
+            return ['synced'=>false, 'error'=>'not_authorized'];
+        }
+
+        $cu = $crud->read('company_users',
+            ['company_id'=>$companyId, 'user_id'=>$targetUser],
+            ['position_id'], false
+        );
+        if (!$cu) return ['synced'=>false, 'error'=>'member_not_found'];
+
+        $positionId = isset($cu['position_id']) ? (int)$cu['position_id'] : null;
+        $sync = self::applyPositionDefaults($crud, $actor, $targetUser, $companyId, $positionId);
+
+        return ['synced'=>true, 'sync'=>$sync];
+    }
+    private static function applyPositionDefaults(Crud $crud, int $actorId, int $targetUserId, int $companyId, ?int $positionId): array
+    {
+        // 1) Eski position-default grantlarını temizle
+        $crud->query("
+            DELETE FROM user_permissions
+            WHERE user_id = :u AND (company_id = :c OR (company_id IS NULL AND :c = 0))
+            AND note LIKE 'pos:%'
+        ", [':u'=>$targetUserId, ':c'=>$companyId]);
+
+        if ($positionId === null) {
+            return ['applied'=>0, 'removed'=>0];
+        }
+
+        // 2) Pozisyondan kodları çek
+        $row = $crud->read('company_positions', ['id'=>$positionId], ['permission_codes'], false);
+        $codes = [];
+        if ($row && !empty($row['permission_codes'])) {
+            $dec = json_decode((string)$row['permission_codes'], true);
+            if (is_array($dec)) {
+                $codes = array_values(array_unique(
+                    array_filter(array_map(fn($x)=> trim((string)$x), $dec), fn($x)=> $x!=='')
+                ));
+            }
+        }
+        if (!$codes) return ['applied'=>0, 'removed'=>0];
+
+        // 3) Kodları permissions tablosuna göre doğrula (FK hatasını önle)
+        //    IN(:c0,:c1,...) için dinamik yer tutucu
+        $ph = [];
+        $map = [];
+        foreach ($codes as $i=>$code) {
+            $k = ":p$i"; $ph[] = $k; $map[$k] = $code;
+        }
+        $valid = $crud->query("
+            SELECT code FROM permissions WHERE code IN (".implode(',', $ph).")
+        ", $map) ?: [];
+        $validCodes = array_map(fn($r)=> (string)$r['code'], $valid);
+        if (!$validCodes) return ['applied'=>0, 'removed'=>0];
+
+        // 4) INSERT IGNORE ile GRANT ekle (not: pos:<id>)
+        $applied = 0;
+        foreach ($validCodes as $code) {
+            $ok = $crud->query("
+                INSERT IGNORE INTO user_permissions
+                (user_id, company_id, permission_code, action, granted_by, note, created_at)
+                VALUES
+                (:u, :c, :code, 'grant', :g, :note, NOW())
+            ", [
+                ':u'=>$targetUserId,
+                ':c'=>$companyId,
+                ':code'=>$code,
+                ':g'=>$actorId,
+                ':note'=>'pos:'.$positionId
+            ]) !== false;
+            if ($ok) $applied++;
+        }
+
+        // removed sayısını ölçmek için istersen DELETE row count’ı ayrı ölçebilirsin;
+        // Crud::query fetchAll döndürdüğü için burada 0 geçiyoruz.
+        return ['applied'=>$applied, 'removed'=>0];
+    }
+    private static function rolesList(array $p): array
+    {
+        $crud = new Crud(); // public okuyabilir
+        $rows = $crud->read('roles', ['scope'=>'company'], ['id','sort','name','description'], true, ['sort'=>'ASC','name'=>'ASC']);
+        return ['items' => $rows ?: []];
+    }
+    private static function setMemberRole(array $p): array
+    {
+        $auth   = Auth::requireAuth();
+        $actor  = (int)$auth['user_id'];
+        $crud   = new Crud($actor);
+
+        $companyId = (int)($p['company_id'] ?? 0);
+        $targetId  = (int)($p['user_id'] ?? 0);
+
+        // rol parametresi id veya ad olabilir
+        $roleId    = isset($p['role_id']) ? (int)$p['role_id'] : null;
+        $roleName  = isset($p['role']) ? strtolower(trim((string)$p['role'])) : null;
+        $seedRolePerms = (int)($p['seed_role_permissions'] ?? 0) === 1; // default: false
+        $resyncPosition = (int)($p['resync_position_perms'] ?? 0) === 1; // istersen pozisyon defaultlarını tekrar uygula
+
+        if ($companyId <= 0 || $targetId <= 0) {
+            return ['updated'=>false, 'error'=>'company_id_and_user_id_required'];
+        }
+
+        // yetki: kurucu || company-admin || company.roles.update
+        $c = $crud->read('companies', ['id'=>$companyId], ['id','created_by'], false);
+        if (!$c) return ['updated'=>false, 'error'=>'company_not_found'];
+
+        $isCreator = (int)$c['created_by'] === $actor;
+        $isAdmin = (bool)$crud->query("
+            SELECT 1 FROM company_users cu
+            JOIN roles r ON r.id = cu.role_id
+            WHERE cu.user_id = :u AND cu.company_id = :c
+            AND r.scope='company' AND r.name='admin' LIMIT 1
+        ", [':u'=>$actor, ':c'=>$companyId]);
+
+        $hasPerm = class_exists('PermissionService') && method_exists('PermissionService','hasPermission')
+            ? PermissionService::hasPermission($actor, 'company.roles.update', $companyId)
+            : false;
+
+        if (!($isCreator || $isAdmin || $hasPerm)) {
+            return ['updated'=>false, 'error'=>'not_authorized'];
+        }
+
+        // hedef üye var mı?
+        $cu = $crud->read('company_users',
+            ['company_id'=>$companyId, 'user_id'=>$targetId],
+            ['id','role_id','position_id','status','is_active'],
+            false
+        );
+        if (!$cu) return ['updated'=>false, 'error'=>'member_not_found'];
+
+        // yeni rolü resolve et
+        if ($roleId === null && $roleName !== null) {
+            $row = $crud->read('roles', ['scope'=>'company','name'=>$roleName], ['id'], false);
+            if (!$row) return ['updated'=>false, 'error'=>'role_not_found'];
+            $roleId = (int)$row['id'];
+        }
+        if ($roleId === null) return ['updated'=>false, 'error'=>'role_id_or_name_required'];
+
+        // son admin kilidi (hedef kullanıcının admin rolünü alıyorsak engelle)
+        $targetIsAdmin = (bool)$crud->query("
+            SELECT 1 FROM company_users cu
+            JOIN roles r ON r.id = cu.role_id
+            WHERE cu.company_id = :c AND cu.user_id = :u
+            AND r.scope='company' AND r.name='admin' LIMIT 1
+        ", [':c'=>$companyId, ':u'=>$targetId]);
+
+        if ($targetIsAdmin) {
+            // şirkette aktif ve approved admin sayısı
+            $adminCntRow = $crud->query("
+                SELECT COUNT(*) AS cnt
+                FROM company_users cu
+                JOIN roles r ON r.id = cu.role_id
+                WHERE cu.company_id = :c
+                AND cu.status='approved' AND cu.is_active=1
+                AND r.scope='company' AND r.name='admin'
+            ", [':c'=>$companyId]);
+            $adminCnt = (int)($adminCntRow[0]['cnt'] ?? 0);
+            if ($adminCnt <= 1) {
+                return ['updated'=>false, 'error'=>'cannot_remove_last_admin'];
+            }
+        }
+
+        // güncelle
+        $ok = $crud->update('company_users', [
+            'role_id'    => $roleId,
+            'updated_at' => date('Y-m-d H:i:s'),
+        ], ['company_id'=>$companyId, 'user_id'=>$targetId]);
+
+        if (!$ok) return ['updated'=>false, 'error'=>'db_update_failed'];
+
+        $sync = ['role_seed'=>['applied'=>0,'removed'=>0], 'position_seed'=>null];
+
+        // NOT: rol defaultlarını seed ETMEK zorunda değiliz. İstersen bayrakla aç.
+        if ($seedRolePerms) {
+            $sync['role_seed'] = self::applyRoleDefaults($crud, $actor, $targetId, $companyId, $roleId);
+        }
+
+        if ($resyncPosition) {
+            // 2.6’daki yardımcı (CompanyHandler içinde): applyPositionDefaults(...)
+            $pid = isset($cu['position_id']) ? (int)$cu['position_id'] : null;
+            $sync['position_seed'] = self::applyPositionDefaults($crud, $actor, $targetId, $companyId, $pid);
+        }
+
+        return ['updated'=>true, 'sync'=>$sync];
+    }
+    private static function syncMemberRolePerms(array $p): array
+    {
+        $auth   = Auth::requireAuth();
+        $actor  = (int)$auth['user_id'];
+        $crud   = new Crud($actor);
+
+        $companyId = (int)($p['company_id'] ?? 0);
+        $userId    = (int)($p['user_id'] ?? 0);
+        if ($companyId <= 0 || $userId <= 0) return ['synced'=>false, 'error'=>'company_id_and_user_id_required'];
+
+        // yetki kontrolü (company.roles.update)
+        $c = $crud->read('companies', ['id'=>$companyId], ['id','created_by'], false);
+        if (!$c) return ['synced'=>false, 'error'=>'company_not_found'];
+        $isCreator = (int)$c['created_by'] === $actor;
+        $isAdmin = (bool)$crud->query("
+            SELECT 1 FROM company_users cu
+            JOIN roles r ON r.id=cu.role_id
+            WHERE cu.user_id=:u AND cu.company_id=:c
+            AND r.scope='company' AND r.name='admin' LIMIT 1
+        ", [':u'=>$actor, ':c'=>$companyId]);
+        $hasPerm = class_exists('PermissionService') && method_exists('PermissionService','hasPermission')
+            ? PermissionService::hasPermission($actor, 'company.roles.update', $companyId)
+            : false;
+        if (!($isCreator || $isAdmin || $hasPerm)) return ['synced'=>false, 'error'=>'not_authorized'];
+
+        $cu = $crud->read('company_users', ['company_id'=>$companyId, 'user_id'=>$userId], ['role_id'], false);
+        if (!$cu || empty($cu['role_id'])) return ['synced'=>false, 'error'=>'role_not_assigned'];
+
+        $sync = self::applyRoleDefaults($crud, $actor, $userId, $companyId, (int)$cu['role_id']);
+        return ['synced'=>true, 'sync'=>$sync];
+    }
+    private static function applyRoleDefaults(Crud $crud, int $actorId, int $userId, int $companyId, int $roleId): array
+    {
+        // 1) Eski role-seed’leri temizle
+        $crud->query("
+            DELETE FROM user_permissions
+            WHERE user_id=:u AND (company_id=:c OR (company_id IS NULL AND :c=0))
+            AND note LIKE 'role:%'
+        ", [':u'=>$userId, ':c'=>$companyId]);
+
+        // 2) Bu role atanmış permission_code’ları çek
+        $r = $crud->query("
+            SELECT rp.permission_code
+            FROM role_permissions rp
+            JOIN roles r ON r.id = rp.role_id
+            WHERE rp.role_id = :rid AND r.scope='company'
+        ", [':rid'=>$roleId]) ?: [];
+        if (!$r) return ['applied'=>0,'removed'=>0];
+
+        $codes = array_values(array_unique(array_filter(array_map(fn($x)=>(string)$x['permission_code'],$r))));
+        if (!$codes) return ['applied'=>0,'removed'=>0];
+
+        // 3) Güvenlik: permissions tablosunda var mı?
+        $ph = [];
+        $map = [];
+        foreach ($codes as $i=>$code) { $k=":p$i"; $ph[]=$k; $map[$k]=$code; }
+        $valid = $crud->query("SELECT code FROM permissions WHERE code IN(".implode(',', $ph).")", $map) ?: [];
+        $validCodes = array_map(fn($x)=>(string)$x['code'],$valid);
+        if (!$validCodes) return ['applied'=>0,'removed'=>0];
+
+        // 4) INSERT IGNORE ile seed
+        $applied = 0;
+        foreach ($validCodes as $code) {
+            $ok = $crud->query("
+                INSERT IGNORE INTO user_permissions
+                (user_id, company_id, permission_code, action, granted_by, note, created_at)
+                VALUES (:u,:c,:code,'grant',:g,:note, NOW())
+            ", [
+                ':u'=>$userId, ':c'=>$companyId, ':code'=>$code,
+                ':g'=>$actorId, ':note'=>'role:'.$roleId
+            ]) !== false;
+            if ($ok) $applied++;
+        }
+
+        return ['applied'=>$applied,'removed'=>0];
     }
 }

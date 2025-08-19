@@ -81,42 +81,4 @@ class JWT
 
         return $payload;
     }
-
-    /*public static function decode(string $token, string $secret): ?array
-    {
-        $parts = explode('.', $token);
-        if (count($parts) !== 3) {
-            Logger::getInstance()->error('JWT decode: bad token parts');
-            return null;
-        }
-
-        [$encodedHeader, $encodedPayload, $encodedSignature] = $parts;
-        $header = json_decode(self::base64UrlDecode($encodedHeader), true);
-        $payload = json_decode(self::base64UrlDecode($encodedPayload), true);
-        $signature = self::base64UrlDecode($encodedSignature);
-
-        if (!$header || !$payload || !$signature) {
-            Logger::getInstance()->error('JWT decode: json/signature parse failed');
-            return null;
-        }
-
-        // Check signature
-        $validSignature = hash_hmac('sha256', "$encodedHeader.$encodedPayload", $secret, true);
-        if (!hash_equals($validSignature, $signature)) {
-            Logger::getInstance()->error('JWT decode: signature mismatch');
-            return null;
-        }
-
-        $now = time();
-        $exp = isset($payload['exp']) ? (int)$payload['exp'] : 0;
-        $nbf = isset($payload['nbf']) ? (int)$payload['nbf'] : 0;
-        $iat = isset($payload['iat']) ? (int)$payload['iat'] : 0;
-
-        // Check expiration
-        if (isset($payload['exp']) && time() > $payload['exp']) {
-            return null;
-        }
-
-        return $payload;
-    }*/
 }
