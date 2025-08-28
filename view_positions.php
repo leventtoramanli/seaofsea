@@ -16,11 +16,11 @@ $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
 
 // Toplam kayıt sayısı
-$total = $pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
+$total = $pdo->query("SELECT COUNT(*) FROM permissions")->fetchColumn();
 $totalPages = ceil($total / $limit);
 
 // Verileri çek
-$stmt = $pdo->prepare("SELECT * FROM certificates");
+$stmt = $pdo->prepare("SELECT * FROM permissions");
 $stmt->execute();
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -47,30 +47,35 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </head>
 <body>
 
-<h2>Company Positions (<?= $total ?> kayıt – Sayfa <?= $page ?> / <?= $totalPages ?>)</h2>
+<h2>Permissions (<?= $total ?> kayıt – Sayfa <?= $page ?> / <?= $totalPages ?>)</h2>
 
 <table>
   <thead>
     <tr>
       <th>ID</th>
-      <th>Name</th>
+      <th>Code</th>
       <th>Category</th>
-      <th>Department</th>
-      <th>Area</th>
       <th>Description</th>
+      <th>Access Level</th>
+      <th>scope</th>
+      <th>Is Public</th>
+      <th>Created At</th>
+      <th>Updated At</th>
     </tr>
   </thead>
   <tbody>
     <?php foreach ($rows as $row): ?>
     <tr>
       <td><?= htmlspecialchars($row['id']) ?></td>
-      <td><?= htmlspecialchars($row['name']) ?></td>
-      <td><?= htmlspecialchars($row['stcw_code']) ?></td>
-      <td><?= htmlspecialchars($row['ship_type']) ?></td>
-      <td><?= htmlspecialchars($row['datelimit']) ?></td>
-      <td><?= htmlspecialchars($row['needs_all']) ?></td>
-      <td><?= htmlspecialchars($row['medical_requirements']) ?></td>
-      <td><?= htmlspecialchars($row['note']) ?></td>
+      <td><?= htmlspecialchars($row['code']) ?></td>
+      <td><?= htmlspecialchars($row['category']) ?></td>
+      <td><?= htmlspecialchars($row['description']) ?></td>
+      <td><?= htmlspecialchars($row['access_level']) ?></td>
+      <td><?= htmlspecialchars($row['scope']) ?></td>
+      <td><?= htmlspecialchars($row['min_role']) ?></td>
+      <td><?= htmlspecialchars($row['is_public']) ?></td>
+      <td><?= htmlspecialchars($row['created_at']) ?></td>
+      <td><?= htmlspecialchars($row['updated_at']) ?></td>
     </tr>
     <?php endforeach; ?>
   </tbody>

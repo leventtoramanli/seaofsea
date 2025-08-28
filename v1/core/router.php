@@ -69,10 +69,17 @@ class Router
 
         try {
             $result = call_user_func([$module, $action], $params);
-            Response::success($result);
+            Response::success($result ?? []);
         } catch (Throwable $e) {
-            Logger::exception($e, "Router dispatch failed: {$input['module']}.{$input['action']}");
-            Response::error("An error occurred during processing.", 500);
+            $code = (int)$e->getCode();
+            $safe = in_array($code, [400,401,403,404,409,422], true) ? $code : 500;
+            if ($safe === 500) {
+                Logger::exception($e, "Router dispatch failed: {$input['module']}.{$input['action']}");
+                Response::error("An error occurred during processing.", 500);
+            } else {
+                Logger::error("Handled error ({$safe}) {$input['module']}.{$input['action']}: ".$e->getMessage());
+                Response::error($e->getMessage(), $safe);
+            }
         }
     }
 }

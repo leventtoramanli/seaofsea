@@ -1,0 +1,170 @@
+harika — işte ekip içinde “bir kerede” anlaşılacak, saklamalık **izin/permission sistemi özeti**. Kısa, pratik, örnekli.
+
+# 1) Kavramsal Model
+
+* **Kim? (Subject)**: Kullanıcı.
+* **Neyi? (Resource/Scope)**: Örn. *company* (şirket). Scope’lu: `company:42`.
+* **Ne yapar? (Action/Permission)**: Örn. `company.members.approve`.
+* **Rol ≠ Permission**: Rol, bir “permission demeti”dir. Karar *permission* bazında verilir.
+
+# 2) Yetki Anahtarları (Naming)
+
+Düz metin, nokta ile namespacelenmiş anahtarlar:
+
+* **Global**: `admin.access`, `user.manage`
+* **Company-scope**:
+
+  * Okuma: `company.view`, `company.members.view`, `company.jobs.view`
+  * Yazma/Operasyon: `company.settings.update`, `company.contact.update`,
+    `company.types.update`, `company.members.approve`, `company.members.invite`,
+    `company.jobs.create`, `company.jobs.update`, `company.jobs.close`
+* **Wildcard** desteklenebilir: `company.*`, `company.members.*`
+
+# 3) Rol → Permission Haritası (Company Scope)
+
+> İleride değişebilir; merkezde tek bir tabloda tutun.
+
+* **admin** → `company.*`
+* **editor** →
+  `company.view`, `company.settings.update`, `company.contact.update`,
+  `company.types.update`, `company.members.*`, `company.jobs.*`
+* **viewer** →
+  `company.view`, `company.members.view`, `company.jobs.view`
+* **follower** →
+  `company.view_public`, `company.jobs.view`
+* **none** → (yok)
+
+> Not: UI’da rol stringine bakmak yerine **permission** kontrol edin. Rol, yalnızca “varsayılan yetki seti” üretmek için backend’de kullanılsın.
+
+# 4) Veri Modeli / Payload Önerisi
+
+Girişte (login) ya da “me” çağrısında tek payload döndürün:
+
+```json
+{
+  "user": { "id": 12, "name": "Ada" },
+  "global": ["user.manage"], 
+  "scopes": {
+    "company": {
+      "42": { "role": "editor", "perms": ["company.view","company.members.*","company.jobs.*","company.settings.update"] },
+      "7":  { "role": "viewer", "perms": ["company.view","company.jobs.view"] }
+    }
+  }
+}
+```
+
+* **global**: Her yerde geçerli.
+* **scopes.company\[companyId].perms**: Sadece o şirkette geçerli.
+* Rol burada bilgi amaçlı; UI’da göstermek için kullanılabilir.
+
+# 5) İstemci (Flutter) Kullanımı (PermissionProvider)
+
+Temel API:
+
+* `can(key, {scopeType, scopeId})`
+* `canAny(keys, {scopeType, scopeId})`
+* `canAll(keys, {scopeType, scopeId})`
+* `roleIn(scopeType, scopeId)` → “admin/editor/…” (UI rozetleri için)
+
+Örnek (sizin koda uygun):
+
+```dart
+final canManageSettings = context.select<PermissionProvider, bool>(
+  (p) => p.can('company.settings.update', scopeType: 'company', scopeId: companyId),
+);
+
+if (canManageSettings) {
+  // Manage butonunu göster
+}
+
+final canSeeApps = context.read<PermissionProvider>()
+  .canAny(['company.members.view','company.members.approve'],
+          scopeType:'company', scopeId: companyId);
+```
+
+**Header’daki Manage butonu:**
+
+```dart
+if (context.read<PermissionProvider>()
+      .can('company.settings.update', scopeType:'company', scopeId: companyId)) {
+  // Manage
+}
+```
+
+**Route Guard (Widget seviyesinde):**
+
+```dart
+class RequirePerm extends StatelessWidget {
+  final String perm;
+  final String scopeType;
+  final int scopeId;
+  final Widget child;
+  const RequirePerm({super.key, required this.perm, required this.scopeType, required this.scopeId, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = context.select<PermissionProvider, bool>(
+      (p) => p.can(perm, scopeType: scopeType, scopeId: scopeId),
+    );
+    return ok ? child : const SizedBox.shrink(); // ya da 403 ekranı
+  }
+}
+```
+
+# 6) Sunucu Tarafı (Mutlaka!)
+
+* UI’daki tüm kontroller **kozmetik**; asıl kontrol **backend**’de.
+* Her endpoint’te `require('company.members.approve', scope: companyId)` tarzı middleware.
+* Scope **zorunlu**: İstek paramından `company_id` veya URL’den alın; kontrolü ona göre yapın.
+* Yetki yoksa **403** (veya bazı durumlarda güvenlik için 404).
+
+# 7) Yükleme, Önbellek, Senkron
+
+* Login sonrası payload’ı al → `PermissionProvider` içine koy.
+* Şirket bağlamı değişince (dropdown) sadece UI kararları için tekrar indirmek gerekmez; payload zaten scope’lu perms içeriyorsa yeter. Rol/üyelik değişmişse `refresh()` endpoint’i ile yenileyin.
+* İsteğe bağlı: `can()` sonuçlarını kısa süreli cache’leyin.
+
+# 8) Genişleme Stratejisi
+
+* Yeni özellik = **yeni permission key**.
+* “Rol → perms” haritasını merkezde güncelleyin, migration gerektirmez.
+* “Feature flag” gerekiyorsa `feature.*` perm ad alanı ekleyin.
+
+# 9) Test / QA
+
+* **Unit test**: `can()` için kombinasyonlar (global, scoped, wildcard).
+* **Integration**: Kritik endpoint’lerde 403 doğrulaması.
+* **UI**: Yönetici/Editor/Viewer/Follower hesaplarıyla görünürlük turu.
+
+---
+
+## Kısa Örnek Harita (Kopyala/As)
+
+```yaml
+roles:
+  admin:
+    - company.*
+  editor:
+    - company.view
+    - company.settings.update
+    - company.contact.update
+    - company.types.update
+    - company.members.*
+    - company.jobs.*
+  viewer:
+    - company.view
+    - company.members.view
+    - company.jobs.view
+  follower:
+    - company.view_public
+    - company.jobs.view
+```
+
+---
+
+## Ana Prensip
+
+> **UI permission-aware** olacak; ama **gerçek güvenlik sadece backend** ile sağlanacak.
+> Rol, yalnızca varsayılan yetki seti üretir; **karar “permission” ile verilir**.
+
+Bu özeti el altında tutun; yeni modül eklerken bir `permission key` seçip haritaya eklemeniz ve UI’da `p.can('…')` demeniz yeterli.
