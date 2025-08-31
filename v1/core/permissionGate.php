@@ -1,9 +1,9 @@
 <?php
 
-require_once __DIR__ . '/Auth.php';
-require_once __DIR__ . '/Crud.php';
-require_once __DIR__ . '/PermissionService.php';
-require_once __DIR__ . '/Response.php';
+require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/crud.php';
+require_once __DIR__ . '/permissionservice.php';
+require_once __DIR__ . '/response.php';
 
 class Gate
 {
@@ -103,6 +103,6 @@ class Gate
     public static function allows(string $permissionCode, ?int $companyId = null): bool
     {
         $auth = Auth::requireAuth();
-        return PermissionService::hasPermission($auth['user_id'], $permissionCode, $companyId);
+        return PermissionService::hasPermission($auth['user_id'], $permissionCode, $companyId ?: null);
     }
 }

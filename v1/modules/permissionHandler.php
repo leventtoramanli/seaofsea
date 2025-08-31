@@ -1,23 +1,20 @@
 <?php
-require_once __DIR__ . '/../core/Auth.php';
-require_once __DIR__ . '/../core/Crud.php';
-require_once __DIR__ . '/../core/PermissionService.php';
+require_once __DIR__ . '/../core/auth.php';
+require_once __DIR__ . '/../core/crud.php';
+require_once __DIR__ . '/../core/permissionservice.php';
 
 class PermissionHandler
 {
-    public static function check(array $params): array
-    {
+    public static function check(array $p=[]): array {
         $auth = Auth::requireAuth();
+        $actor = (int)$auth['user_id'];
 
-        $permissionCode = $params['permission_code'] ?? null;
-        $companyId = $params['company_id'] ?? null;
+        $code = (string)($p['permission_code'] ?? '');
+        $companyId = isset($p['company_id']) ? (int)$p['company_id'] : 0;
+        if ($code==='') return ['success'=>false,'message'=>'code_required'];
 
-        if (!$permissionCode) {
-            return ['success' => false, 'message' => 'permission_code is required'];
-        }
-
-        $has = PermissionService::hasPermission($auth['user_id'], $permissionCode, $companyId);
-        return ['success' => true, 'allowed' => $has];
+        $allowed = PermissionService::hasPermission($actor, $code, $companyId ?: null);
+        return ['success'=>true, 'allowed'=>$allowed];
     }
 
     
@@ -41,50 +38,48 @@ class PermissionHandler
         return ['success' => true, 'permissions' => $list];
     }
 
-    public static function assign(array $params): array
-    {
+    public static function assign(array $p=[]): array {
         $auth = Auth::requireAuth();
+        $actor = (int)$auth['user_id'];
+        $crud = new Crud($actor);
 
-        $targetUserId   = (int)($params['user_id'] ?? 0);
-        $permissionCode = $params['permission_code'] ?? null;
-        $companyId      = isset($params['company_id']) ? (int)$params['company_id'] : null;
-        $note           = $params['note'] ?? null;
-        $expiresAt      = $params['expires_at'] ?? null;
+        $uid = (int)($p['user_id'] ?? 0);
+        $code = (string)($p['permission_code'] ?? '');
+        $companyId = (int)($p['company_id'] ?? 0);
+        $note = isset($p['note']) ? (string)$p['note'] : null;
+        $expires = isset($p['expires_at']) ? (string)$p['expires_at'] : null;
 
-        if (!$targetUserId || !$permissionCode) {
-            return ['success' => false, 'message' => 'user_id and permission_code are required'];
-        }
+        if ($uid<=0 || $code==='') return ['success'=>false,'message'=>'user_id_and_code_required'];
 
-        // (Opsiyonel) burada Gate::check('permission.assign') çağrılabilir.
-        $ok = PermissionService::assignPermission($targetUserId, $permissionCode, $companyId, $auth['user_id'], $note, $expiresAt);
-        return ['success' => $ok];
+        $ok = PermissionService::upsertOverlay($crud, $actor, $uid, $companyId, $code, 'grant', $note, $expires);
+        return ['success'=>(bool)$ok];
     }
 
-    public static function revoke(array $params): array
-    {
+    public static function revoke(array $p=[]): array {
         $auth = Auth::requireAuth();
+        $actor = (int)$auth['user_id'];
+        $crud = new Crud($actor);
 
-        $targetUserId   = (int)($params['user_id'] ?? 0);
-        $permissionCode = $params['permission_code'] ?? null;
-        $companyId      = isset($params['company_id']) ? (int)$params['company_id'] : null;
-        $note           = $params['note'] ?? null;
+        $uid = (int)($p['user_id'] ?? 0);
+        $code = (string)($p['permission_code'] ?? '');
+        $companyId = (int)($p['company_id'] ?? 0);
+        $note = isset($p['note']) ? (string)$p['note'] : null;
 
-        if (!$targetUserId || !$permissionCode) {
-            return ['success' => false, 'message' => 'user_id and permission_code are required'];
-        }
+        if ($uid<=0 || $code==='') return ['success'=>false,'message'=>'user_id_and_code_required'];
 
-        // (Opsiyonel) Gate::check('permission.revoke')
-        $ok = PermissionService::revokePermission($targetUserId, $permissionCode, $companyId, $auth['user_id'], $note);
-        return ['success' => $ok];
+        $ok = PermissionService::upsertOverlay($crud, $actor, $uid, $companyId, $code, 'revoke', $note, null);
+        return ['success'=>(bool)$ok];
     }
-    public static function effective(array $params): array
-    {
+    public static function effective(array $p=[]): array {
         $auth = Auth::requireAuth();
-        $userId = (int)($params['user_id'] ?? $auth['user_id']);
-        $companyId = isset($params['company_id']) ? (int)$params['company_id'] : null;
+        $actor = (int)$auth['user_id'];
+        $crud  = new Crud($actor);
 
-        $perms = PermissionService::getUserPermissions($userId, $companyId);
-        return ['success' => true, 'effective' => $perms];
+        $uid = (int)($p['user_id'] ?? $actor);
+        $companyId = isset($p['company_id']) ? (int)$p['company_id'] : 0;
+
+        $list = PermissionService::effective($crud, $uid, $companyId);
+        return ['success'=>true, 'effective'=>$list];
     }
 
     public static function get_all_permissions(array $params): array { return self::getAll($params); }
@@ -259,32 +254,22 @@ class PermissionHandler
         $effective = PermissionService::getUserPermissions($targetId, $companyId);
 
         // --- 3) Kullanıcıya ait GRANT/REVOKE (hem global hem company) — UI rozetleri için
-        $ur = $crud->query("
-            SELECT permission_code, action, company_id
-            FROM user_permissions
-            WHERE user_id=:u
-            AND (company_id IS NULL OR company_id=:c)
-        ", [':u'=>$targetId, ':c'=>$companyId]) ?: [];
+        $g = PermissionService::loadOverlay($crud, $targetId, 0);                 // global overlay
+        $o = PermissionService::loadOverlay($crud, $targetId, (int)$companyId);   // company overlay
 
-        $grantsCompany = [];
-        $grantsGlobal  = [];
-        $revokesCompany= [];
-        $revokesGlobal = [];
-        foreach ($ur as $row) {
-            $code = (string)$row['permission_code'];
-            $act  = (string)($row['action'] ?? 'grant');
-            $cid  = $row['company_id'] ?? null;
-            $isCompany = isset($cid) && ((int)$cid === $companyId);
-            if ($act === 'revoke') {
-                $isCompany ? $revokesCompany[$code]=true : $revokesGlobal[$code]=true;
-            } else {
-                $isCompany ? $grantsCompany[$code]=true : $grantsGlobal[$code]=true;
-            }
+        $grantsCompany = []; $grantsGlobal = [];
+        $revokesCompany= []; $revokesGlobal= [];
+
+        foreach (($g['perms'] ?? []) as $code => $meta) {
+            $a = $meta['a'] ?? null; if (!$a) continue;
+            if ($a === 'grant')  $grantsGlobal[]  = $code;
+            if ($a === 'revoke') $revokesGlobal[] = $code;
         }
-        $grantsCompany = array_keys($grantsCompany);
-        $grantsGlobal  = array_keys($grantsGlobal);
-        $revokesCompany= array_keys($revokesCompany);
-        $revokesGlobal = array_keys($revokesGlobal);
+        foreach (($o['perms'] ?? []) as $code => $meta) {
+            $a = $meta['a'] ?? null; if (!$a) continue;
+            if ($a === 'grant')  $grantsCompany[]  = $code;
+            if ($a === 'revoke') $revokesCompany[] = $code;
+        }
 
         // --- 4) Rol ve pozisyon kaynakları (kaynak rozetleri için)
         // Company role

@@ -13,6 +13,134 @@ class PermissionService
     private static array $cacheHasPerm   = [];   // [userId][companyKey:int][code] = bool
     private static array $permMetaCache  = [];   // [code] = ['scope'=>'global|company','is_public'=>0/1]
 
+    public static function loadOverlay(Crud $crud, int $userId, int $companyId = 0): array
+    {
+        $row = $crud->read('user_company_perms',
+            ['user_id'=>$userId, 'company_id'=>$companyId],
+            ['permissions_json','version','updated_at'],
+            false
+        );
+        if (!$row || empty($row['permissions_json'])) {
+            return ['v'=>1, 'perms'=>[]];
+        }
+        $j = json_decode((string)$row['permissions_json'], true);
+        if (!is_array($j)) $j = [];
+        $j += ['v'=>1, 'perms'=>[]];
+        if (!is_array($j['perms'])) $j['perms'] = [];
+        return $j;
+    }
+
+    // --- JSON overlay'i patchle (grant/revoke) ---
+    public static function upsertOverlay(Crud $crud, int $actorId, int $userId, int $companyId, string $code, string $action, ?string $note=null, ?string $expiresAt=null): bool
+    {
+        $now = date('Y-m-d H:i:s');
+        $row = $crud->read('user_company_perms', ['user_id'=>$userId, 'company_id'=>$companyId], ['id','permissions_json','version'], false);
+
+        $obj = ['v'=>1, 'perms'=>[]];
+        if ($row && !empty($row['permissions_json'])) {
+            $dec = json_decode((string)$row['permissions_json'], true);
+            if (is_array($dec)) {
+                $obj = $dec + ['v'=>1];
+                if (!isset($obj['perms']) || !is_array($obj['perms'])) $obj['perms'] = [];
+            }
+        }
+
+        $obj['perms'][$code] = array_filter([
+            'a'   => ($action === 'revoke' ? 'revoke' : 'grant'),
+            'by'  => $actorId,
+            'at'  => $now,
+            'exp' => $expiresAt ?: null,
+            'note'=> $note ?: null,
+        ], fn($v)=> $v !== null);
+
+        $json = json_encode($obj, JSON_UNESCAPED_UNICODE);
+        if (!$row) {
+            // insert
+            return (bool)$crud->create('user_company_perms', [
+                'user_id' => $userId,
+                'company_id' => $companyId,
+                'permissions_json' => $json,
+                'version' => 1,
+                'updated_by' => $actorId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        } else {
+            // optimistic lock basit versiyon
+            return (bool)$crud->update('user_company_perms', [
+                'permissions_json' => $json,
+                'version' => (int)$row['version'] + 1,
+                'updated_by' => $actorId,
+                'updated_at' => $now,
+            ], ['id'=>(int)$row['id']]);
+        }
+    }
+
+    // --- role taban set ---
+    public static function baseRoleCodes(Crud $crud, int $userId, int $companyId): array
+    {
+        // şirket kurucusu mu?
+        $c = $crud->read('companies', ['id'=>$companyId], ['created_by'], false);
+        if ($c && (int)$c['created_by'] === $userId) {
+            return self::allCompanyCodes($crud); // kurucuya full company scope
+        }
+
+        // company admin mi? (role_id = 4)
+        $row = $crud->query("
+            SELECT 1
+            FROM company_users cu
+            JOIN roles r ON r.id = cu.role_id
+            WHERE cu.user_id = :u AND cu.company_id = :c
+              AND r.scope='company' AND r.name='admin'
+            LIMIT 1
+        ", [':u'=>$userId, ':c'=>$companyId]);
+        if ($row) {
+            return self::allCompanyCodes($crud);
+        }
+
+        // normal role
+        $r = $crud->query("
+            SELECT rp.permission_code
+            FROM company_users cu
+            JOIN role_permissions rp ON rp.role_id = cu.role_id
+            JOIN roles r ON r.id = cu.role_id AND r.scope='company'
+            WHERE cu.user_id = :u AND cu.company_id = :c
+        ", [':u'=>$userId, ':c'=>$companyId]) ?: [];
+
+        return array_values(array_unique(array_map(fn($x)=>(string)$x['permission_code'], $r)));
+    }
+
+    private static function allCompanyCodes(Crud $crud): array
+    {
+        $rows = $crud->query("SELECT code FROM permissions WHERE scope='company'") ?: [];
+        return array_values(array_unique(array_map(fn($x)=>(string)$x['code'], $rows)));
+    }
+
+    // --- efektif ---
+    public static function effective(Crud $crud, int $userId, int $companyId=0): array
+    {
+        $base = $companyId > 0 ? self::baseRoleCodes($crud, $userId, $companyId) : []; // global’de role yoksa boş
+        $set = array_fill_keys($base, true);
+
+        // global overlay
+        $g = self::loadOverlay($crud, $userId, 0);
+        // company overlay (varsa)
+        $o = $companyId > 0 ? self::loadOverlay($crud, $userId, $companyId) : ['perms'=>[]];
+
+        foreach ([$g['perms'], $o['perms']] as $perms) {
+            foreach ($perms as $code => $meta) {
+                if (!is_array($meta)) continue;
+                $a = $meta['a'] ?? null;
+                $exp = $meta['exp'] ?? null;
+                if ($exp && strtotime($exp) < time()) continue; // süresi bitmiş
+                if ($a === 'grant')   { $set[$code] = true; }
+                elseif ($a === 'revoke') { unset($set[$code]); }
+            }
+        }
+
+        return array_keys($set);
+    }
+
     private static function initCrud(int $userContextId): void
     {
         // Bu serviste yalnız DB okuma/yazma yapıyoruz; tablolara erişimde guard kapalı.
@@ -41,6 +169,16 @@ class PermissionService
         return $meta;
     }
 
+    public static function isGlobalAdminUser(int $userId): bool
+    {
+        self::initCrud($userId);
+        $u = self::$crud->read('users', ['id'=>$userId], ['role_id'], false);
+        if (!$u || empty($u['role_id'])) return false;
+
+        $r = self::$crud->read('roles', ['id'=>(int)$u['role_id']], ['scope','name'], false);
+        return $r && ($r['scope'] === 'global') && (strtolower((string)$r['name']) === 'admin');
+    }
+
     /** Kullanıcının bir şirketteki rol_id’sini döndürür (yoksa null).
      *  Üye kaydı yoksa ve kullanıcı şirketin kurucusu ise company-admin rol ID’si fallback yapılır. */
     private static function getCompanyRoleId(int $userId, int $companyId): ?int
@@ -61,6 +199,11 @@ class PermissionService
             if ($adm && !empty($adm['id'])) {
                 return (int)$adm['id'];
             }
+        }
+
+        if (self::isGlobalAdminUser($userId)) {
+            $adm = self::$crud->read('roles', ['scope' => 'company', 'name' => 'admin'], ['id'], false);
+            if ($adm && !empty($adm['id'])) return (int)$adm['id'];
         }
 
         return null;
@@ -137,57 +280,41 @@ class PermissionService
      */
     public static function getUserPermissions(int $userId, ?int $companyId = null): array
     {
-        self::initCrud($userId);
-        $ck = self::companyKey($companyId);
+        // guard kapalı crud: yalnızca veri okuma/yazma
+        $crud = new Crud($userId, false);
+        $cid  = (int)($companyId ?? 0);
 
-        // Cache?
-        if (isset(self::$cacheEffective[$userId][$ck])) {
-            return self::$cacheEffective[$userId][$ck];
-        }
+        $list = self::effective($crud, $userId, $cid); // overlay + baseRoleCodes
+        sort($list);
+        return $list;
+    }
+    
+    public static function hasPermission(int $userId, string $code, ?int $companyId=null): bool
+    {
+        $crud = new Crud($userId, false);
 
-        // 1) Role tabanlı set
-        $roleCodes = [];
-
-        // Global rol kodları
-        $globalRoleId = self::getGlobalRoleId($userId);
-        if ($globalRoleId) {
-            foreach (self::getRolePermissionCodesByRoleId($globalRoleId) as $c) {
-                $roleCodes[$c] = true;
-            }
-        }
-
-        // Company rol kodları (isteğe bağlı)
+        // kurucu/company-admin bypass (mevcut hızlı yol)
         if ($companyId) {
-            $companyRoleId = self::getCompanyRoleId($userId, $companyId);
-            if ($companyRoleId) {
-                foreach (self::getRolePermissionCodesByRoleId($companyRoleId) as $c) {
-                    $roleCodes[$c] = true;
-                }
-            }
+            $c = $crud->read('companies', ['id'=>$companyId], ['created_by'], false);
+            if ($c && (int)$c['created_by'] === $userId) return true;
+            $isAdmin = $crud->query("
+                SELECT 1 FROM company_users cu
+                JOIN roles r ON r.id=cu.role_id
+                WHERE cu.user_id=:u AND cu.company_id=:c
+                AND r.scope='company' AND r.name='admin' LIMIT 1
+            ", [':u'=>$userId, ':c'=>$companyId]);
+            if ($isAdmin) return true;
         }
 
-        // 2) Kullanıcı bazlı grants/revokes (global + company)
-        $ur = self::getUserGrantsAndRevokes($userId, $companyId);
-        $grants  = array_fill_keys($ur['grants'], true);
-        $revokes = array_fill_keys($ur['revokes'], true);
-
-        // 3) Birleştir (revoke > grant > role)
-        $effective = $roleCodes + $grants;         // birlik (keys)
-        $effective = array_diff_key($effective, $revokes);
-
-        $out = array_keys($effective);
-        sort($out);
-
-        // Cache’e yaz
-        self::$cacheEffective[$userId][$ck] = $out;
-        return $out;
+        $eff = self::effective($crud, $userId, (int)($companyId ?? 0));
+        return in_array($code, $eff, true);
     }
 
     /**
      * Tek bir izin için kontrol (cache kullanır).
      * companyId verilirse hem company-scoped hem de global kayıtları dikkate alır.
      */
-    public static function hasPermission(int $userId, string $permissionCode, ?int $companyId = null): bool
+    /*public static function hasPermission(int $userId, string $permissionCode, ?int $companyId = null): bool
     {
         self::initCrud($userId);
         $ck = self::companyKey($companyId);
@@ -247,7 +374,7 @@ class PermissionService
 
         self::$cacheHasPerm[$userId][$ck][$permissionCode] = $allowed;
         return $allowed;
-    }
+    }*/
 
     /** Grant izin (global için companyId NULL bırak) */
     public static function assignPermission(
@@ -258,43 +385,14 @@ class PermissionService
         ?string $note = null,
         ?string $expiresAt = null
     ): bool {
-        self::initCrud($userId);
-
-        // Global veya company revoke varsa temizle
-        self::$crud->query("
-            DELETE FROM user_permissions
-            WHERE user_id = :uid AND permission_code = :code
-              AND IFNULL(company_id,0) = IFNULL(:cid,0) AND action = 'revoke'
-        ", [':uid' => $userId, ':code' => $permissionCode, ':cid' => $companyId]);
-
-        // Zaten grant varsa dokunma
-        $exists = self::$crud->read('user_permissions', [
-            'user_id'         => $userId,
-            'permission_code' => $permissionCode,
-            'company_id'      => $companyId,
-            'action'          => 'grant'
-        ], false);
-        if ($exists) {
-            self::invalidateCache($userId, $companyId);
-            return true;
-        }
-
-        $ok = self::$crud->create('user_permissions', [
-            'user_id'         => $userId,
-            'permission_code' => $permissionCode,
-            'company_id'      => $companyId,
-            'action'          => 'grant',
-            'granted_by'      => $grantedBy,
-            'note'            => $note,
-            'expires_at'      => $expiresAt,
-            'created_at'      => date('Y-m-d H:i:s'),
-        ]) !== false;
-
-        self::invalidateCache($userId, $companyId);
-        return $ok;
+        $actorId = $grantedBy ?: $userId;
+        $crud    = new Crud($actorId, false);
+        return self::upsertOverlay(
+            $crud, $actorId, $userId, (int)($companyId ?? 0),
+            $permissionCode, 'grant', $note, $expiresAt
+        );
     }
 
-    /** Revoke izin (rol ile geleni de etkisiz bırakır) */
     public static function revokePermission(
         int $userId,
         string $permissionCode,
@@ -302,32 +400,12 @@ class PermissionService
         ?int $grantedBy = null,
         ?string $note = null
     ): bool {
-        self::initCrud($userId);
-
-        // Zaten revoke varsa idempotent
-        $exists = self::$crud->read('user_permissions', [
-            'user_id'         => $userId,
-            'permission_code' => $permissionCode,
-            'company_id'      => $companyId,
-            'action'          => 'revoke'
-        ], false);
-        if ($exists) {
-            self::invalidateCache($userId, $companyId);
-            return true;
-        }
-
-        $ok = self::$crud->create('user_permissions', [
-            'user_id'         => $userId,
-            'permission_code' => $permissionCode,
-            'company_id'      => $companyId,
-            'action'          => 'revoke',
-            'granted_by'      => $grantedBy,
-            'note'            => $note,
-            'created_at'      => date('Y-m-d H:i:s'),
-        ]) !== false;
-
-        self::invalidateCache($userId, $companyId);
-        return $ok;
+        $actorId = $grantedBy ?: $userId;
+        $crud    = new Crud($actorId, false);
+        return self::upsertOverlay(
+            $crud, $actorId, $userId, (int)($companyId ?? 0),
+            $permissionCode, 'revoke', $note, null
+        );
     }
 
     /** Cache temizleme yardımcıları */
