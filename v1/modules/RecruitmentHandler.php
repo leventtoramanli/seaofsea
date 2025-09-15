@@ -22,18 +22,56 @@ class RecruitmentHandler
         return $_SERVER['HTTP_USER_AGENT'] ?? null;
     }
 
-    private static function audit(Crud $crud, int $actorId, string $entityType, ?int $entityId, string $action, array $meta = []): void
-    {
-        $crud->create('audit_events', [
-            'actor_id'    => $actorId,
-            'entity_type' => $entityType,
-            'entity_id'   => $entityId,
-            'action'      => $action,
-            'meta'        => json_encode($meta, JSON_UNESCAPED_UNICODE),
-            'ip'          => self::ip(),
-            'user_agent'  => self::ua(),
-            'created_at'  => self::nowUtc(),
-        ]);
+    private static function to_int_or_null($v): ?int {
+        if ($v === null) return null;
+        if ($v === '') return null;
+        if (is_numeric($v)) return (int)$v;
+        return null;
+    }
+
+    private static function to_decimal_or_null($v): ?float {
+        if ($v === null) return null;
+        if ($v === '') return null;
+        if (is_numeric($v)) return (float)$v;
+        return null;
+    }
+    private static function sanitize_enum($v, array $whitelist): ?string {
+        if ($v === null) return null;
+        $v = trim((string)$v);
+        if ($v === '') return null;
+        return in_array($v, $whitelist, true) ? $v : null;
+    }
+
+    private static function sanitize_currency($v): ?string {
+        if ($v === null) return null;
+        $v = strtoupper(trim((string)$v));
+        return (preg_match('/^[A-Z]{3}$/', $v)) ? $v : null;
+    }
+
+    private static function normalize_json($v): ?string {
+        if ($v === null || $v === '') return null;
+        if (is_string($v)) {
+            json_decode($v, true);
+            return (json_last_error() === JSON_ERROR_NONE) ? $v : null;
+        }
+        return json_encode($v, JSON_UNESCAPED_UNICODE);
+    }
+
+    private static function audit(Crud $crud, int $actorId, string $etype, int $eid, string $action, array $meta = []): void {
+        try {
+            $crud->create('audit_events', [
+                'actor_id'    => $actorId,
+                'entity_type' => $etype,
+                'entity_id'   => $eid,
+                'action'      => $action,
+                'meta'        => json_encode($meta, JSON_UNESCAPED_UNICODE),
+                'ip'          => $_SERVER['REMOTE_ADDR'] ?? null,
+                'user_agent'  => $_SERVER['HTTP_USER_AGENT'] ?? null,
+                'created_at'  => date('Y-m-d H:i:s'),
+            ]);
+        } catch (\Throwable $e) {
+            Logger::error('AUDIT_FAIL '.$e->getMessage());
+        }
     }
 
     private static function require_int($value, string $name): ?array {
@@ -53,7 +91,7 @@ class RecruitmentHandler
     }
 
     private static function allow_statuses(): array {
-        return ['draft','published','closed','archived'];
+        return ['view','draft','published','closed','archived'];
     }
 
     private static function allow_app_statuses(): array {
@@ -71,69 +109,235 @@ class RecruitmentHandler
     public static function post_create(array $p): array
     {
         $auth = Auth::requireAuth();
-        $crud = new Crud((int)$auth['user_id']);
+        $actorId = (int)$auth['user_id'];
+        $crud = new Crud($actorId);
 
-        $companyId = self::require_int($p['company_id'] ?? null, 'company_id');
-        if (isset($companyId['success'])) return $companyId;
-        Gate::check('recruitment.post.create', $companyId['ok']);
+        $companyId = (int)($p['company_id'] ?? 0);
+        Gate::check('recruitment.post.create', $companyId);
 
-        $title = self::require_non_empty($p['title'] ?? null, 'title');
-        if (isset($title['success'])) return $title;
+        $title = trim((string)($p['title'] ?? ''));
+        if ($title === '') {
+            return ['success'=>false,'message'=>'Title is required','code'=>422];
+        }
 
-        $desc  = trim((string)($p['description'] ?? ''));
-        $posId = isset($p['position_id']) ? (int)$p['position_id'] : null;
+        $area = isset($p['area']) ? trim((string)$p['area']) : 'crew';
+        $allowedAreas = ['crew','office','port','shipyard','supplier','agency'];
+        if (!in_array($area, $allowedAreas, true)) $area = 'crew';
+
+        $description = isset($p['description']) ? (string)$p['description'] : null;
+        $positionId  = isset($p['position_id']) ? (int)$p['position_id'] : null;
+        $location    = isset($p['location']) ? trim((string)$p['location']) : null;
+
+        // --- Yeni alanlar
+        $employmentType = self::sanitize_enum($p['employment_type'] ?? null, [
+            'full_time','part_time','contract','seasonal','internship','temporary','other'
+        ]);
+
+        $ageMin  = self::to_int_or_null($p['age_min']  ?? null);
+        $ageMax  = self::to_int_or_null($p['age_max']  ?? null);
+        if ($ageMin !== null && $ageMin < 0) $ageMin = 0;
+        if ($ageMax !== null && $ageMax < 0) $ageMax = 0;
+        if ($ageMin !== null && $ageMax !== null && $ageMin > $ageMax) {
+            return ['success'=>false,'message'=>'age_min cannot be greater than age_max','code'=>422];
+        }
+
+        $salaryMin = self::to_decimal_or_null($p['salary_min'] ?? null);
+        $salaryMax = self::to_decimal_or_null($p['salary_max'] ?? null);
+        if ($salaryMin !== null && $salaryMin < 0) $salaryMin = 0;
+        if ($salaryMax !== null && $salaryMax < 0) $salaryMax = 0;
+        if ($salaryMin !== null && $salaryMax !== null && $salaryMin > $salaryMax) {
+            return ['success'=>false,'message'=>'salary_min cannot be greater than salary_max','code'=>422];
+        }
+
+        $salaryCurrency = self::sanitize_currency($p['salary_currency'] ?? null);
+        $salaryRateUnit = self::sanitize_enum($p['salary_rate_unit'] ?? null, [
+            'hour','day','month','year','contract','trip'
+        ]);
+
+        $contractMonths  = self::to_int_or_null($p['contract_duration_months'] ?? null);
+        $probationMonths = self::to_int_or_null($p['probation_months'] ?? null);
+
+        $rotOn  = self::to_int_or_null($p['rotation_on_months']  ?? null);
+        $rotOff = self::to_int_or_null($p['rotation_off_months'] ?? null);
+
+        $bonusType  = self::sanitize_enum($p['rotation_bonus_type'] ?? null, ['none','fixed','one_salary','percent']) ?? 'none';
+        $bonusValue = self::to_decimal_or_null($p['rotation_bonus_value'] ?? null);
+        if ($bonusType === 'fixed' && ($bonusValue === null || $bonusValue <= 0)) {
+            return ['success'=>false,'message'=>'rotation_bonus_value must be positive for fixed bonus','code'=>422];
+        }
+        if ($bonusType === 'percent') {
+            if ($bonusValue === null || $bonusValue < 0 || $bonusValue > 100) {
+                return ['success'=>false,'message'=>'rotation_bonus_value must be between 0 and 100 for percent bonus','code'=>422];
+            }
+        }
+        if ($bonusType === 'one_salary') $bonusValue = null;
+
+        $cityId = self::to_int_or_null($p['city_id'] ?? null);
+
+        $benefitsJson    = self::normalize_json($p['benefits_json'] ?? null);
+        $obligationsJson = self::normalize_json($p['obligations_json'] ?? null);
+        $requirementsJson= self::normalize_json($p['requirements_json'] ?? null);
 
         $data = [
-            'company_id'   => $companyId['ok'],
-            'title'        => $title['ok'],
-            'description'  => $desc,
-            'position_id'  => $posId,
-            'status'       => 'draft',
-            'created_at'   => self::nowUtc(),
-            'updated_at'   => self::nowUtc(),
+            'company_id' => $companyId,
+            'position_id'=> $positionId,
+            'title'      => $title,
+            'description'=> $description,
+            'area'       => $area,
+            'location'   => $location,
+            'employment_type' => $employmentType,
+            'age_min'    => $ageMin,
+            'age_max'    => $ageMax,
+            'salary_min' => $salaryMin,
+            'salary_max' => $salaryMax,
+            'salary_currency'  => $salaryCurrency,
+            'salary_rate_unit' => $salaryRateUnit,
+            'contract_duration_months' => $contractMonths,
+            'probation_months' => $probationMonths,
+            'rotation_on_months'  => $rotOn,
+            'rotation_off_months' => $rotOff,
+            'rotation_bonus_type'  => $bonusType,
+            'rotation_bonus_value' => $bonusValue,
+            'city_id' => $cityId,
+            'benefits_json'    => $benefitsJson,
+            'obligations_json' => $obligationsJson,
+            'requirements_json'=> $requirementsJson,
+            'status'     => 'draft',
+            'visibility' => 'public',
+            'created_by' => $actorId,
+            'updated_at' => date('Y-m-d H:i:s'),
         ];
 
         $id = $crud->create('job_posts', $data);
         if (!$id) {
-            return ['success'=>false, 'message'=>'Failed to create post', 'code'=>500];
+            return ['success'=>false,'message'=>'Create failed','code'=>500];
         }
 
-        self::audit($crud, (int)$auth['user_id'], 'job_post', (int)$id, 'create', ['payload'=>$data]);
+        // Audit
+        self::audit($crud, $actorId, 'job_post', (int)$id, 'create', ['fields'=>$data]);
 
-        return ['success'=>true, 'message'=>'Post created', 'data'=>['id'=>(int)$id], 'code'=>200];
+        return [
+            'success'=>true,
+            'message'=>'Created',
+            'data'=>['id'=>(int)$id],
+            'code'=>200
+        ];
     }
 
     public static function post_update(array $p): array
     {
         $auth = Auth::requireAuth();
-        $crud = new Crud((int)$auth['user_id']);
+        $actorId = (int)$auth['user_id'];
+        $crud = new Crud($actorId);
 
-        $id = self::require_int($p['id'] ?? null, 'id');
-        if (isset($id['success'])) return $id;
-
-        $rows = $crud->read('job_posts', ['id'=>$id['ok']], ['*'], true);
-        if (!$rows) return ['success'=>false, 'message'=>'Post not found', 'code'=>404];
-        $post = $rows[0];
-
-        Gate::check('recruitment.post.update', (int)$post['company_id']);
-
-        $allowed = ['title','description','position_id','location','employment_type'];
-        $update = [];
-        foreach ($allowed as $k) {
-            if (array_key_exists($k, $p)) $update[$k] = $p[$k];
+        $id = (int)($p['id'] ?? 0);
+        if ($id <= 0) {
+            return ['success'=>false,'message'=>'Invalid id','code'=>422];
         }
-        if (!$update) return ['success'=>true, 'message'=>'No changes', 'data'=>['id'=>(int)$id['ok']], 'code'=>200];
 
-        $update['updated_at'] = self::nowUtc();
+        // Kayıt çek → company_id öğren
+        $row = $crud->read('job_posts', ['id'=>$id], ['id','company_id'], false);
+        if (!$row) {
+            return ['success'=>false,'message'=>'Not found','code'=>404];
+        }
+        $companyId = (int)$row['company_id'];
+        Gate::check('recruitment.post.update', $companyId);
 
-        $ok = $crud->update('job_posts', $update, ['id'=>$id['ok']]);
+        $data = [];
+        $auditChanges = [];
+
+        $mapString = [
+            'title','description','area','location','employment_type',
+            'salary_currency','salary_rate_unit','rotation_bonus_type'
+        ];
+        foreach ($mapString as $k) {
+            if (array_key_exists($k, $p)) {
+                $v = trim((string)$p[$k]);
+                if ($k === 'area') {
+                    $allowedAreas = ['crew','office','port','shipyard','supplier','agency'];
+                    if (!in_array($v, $allowedAreas, true)) $v = 'crew';
+                }
+                if ($k === 'employment_type') {
+                    $v = self::sanitize_enum($v, [
+                        'full_time','part_time','contract','seasonal','internship','temporary','other'
+                    ]);
+                }
+                if ($k === 'salary_rate_unit') {
+                    $v = self::sanitize_enum($v, ['hour','day','month','year','contract','trip']);
+                }
+                if ($k === 'salary_currency') {
+                    $v = self::sanitize_currency($v);
+                }
+                if ($k === 'rotation_bonus_type') {
+                    $v = self::sanitize_enum($v, ['none','fixed','one_salary','percent']) ?? 'none';
+                }
+                $data[$k] = ($v === '') ? null : $v;
+            }
+        }
+
+        $mapInt = [
+            'position_id','age_min','age_max','contract_duration_months',
+            'probation_months','rotation_on_months','rotation_off_months','city_id'
+        ];
+        foreach ($mapInt as $k) {
+            if (array_key_exists($k, $p)) {
+                $data[$k] = self::to_int_or_null($p[$k]);
+            }
+        }
+
+        $mapDec = ['salary_min','salary_max','rotation_bonus_value'];
+        foreach ($mapDec as $k) {
+            if (array_key_exists($k, $p)) {
+                $data[$k] = self::to_decimal_or_null($p[$k]);
+            }
+        }
+
+        // Mantık kontrolleri
+        if (array_key_exists('age_min', $data) && array_key_exists('age_max', $data)
+            && $data['age_min'] !== null && $data['age_max'] !== null
+            && $data['age_min'] > $data['age_max']) {
+            return ['success'=>false,'message'=>'age_min cannot be greater than age_max','code'=>422];
+        }
+
+        if (array_key_exists('salary_min', $data) && array_key_exists('salary_max', $data)
+            && $data['salary_min'] !== null && $data['salary_max'] !== null
+            && (float)$data['salary_min'] > (float)$data['salary_max']) {
+            return ['success'=>false,'message'=>'salary_min cannot be greater than salary_max','code'=>422];
+        }
+
+        if (array_key_exists('rotation_bonus_type', $data)) {
+            $bt = $data['rotation_bonus_type'];
+            $bv = $data['rotation_bonus_value'] ?? null;
+            if ($bt === 'fixed' && ($bv === null || $bv <= 0)) {
+                return ['success'=>false,'message'=>'rotation_bonus_value must be positive for fixed bonus','code'=>422];
+            }
+            if ($bt === 'percent' && ($bv === null || $bv < 0 || $bv > 100)) {
+                return ['success'=>false,'message'=>'rotation_bonus_value must be between 0 and 100 for percent bonus','code'=>422];
+            }
+            if ($bt === 'one_salary') $data['rotation_bonus_value'] = null;
+        }
+
+        // JSON alanları
+        foreach (['benefits_json','obligations_json','requirements_json'] as $jk) {
+            if (array_key_exists($jk, $p)) {
+                $data[$jk] = self::normalize_json($p[$jk]);
+            }
+        }
+
+        if (empty($data)) {
+            return ['success'=>true,'message'=>'No changes','data'=>['id'=>$id],'code'=>200];
+        }
+
+        $data['updated_at'] = date('Y-m-d H:i:s');
+
+        $ok = $crud->update('job_posts', $data, ['id'=>$id]);
         if (!$ok) {
-            return ['success'=>false, 'message'=>'Update failed', 'code'=>500];
+            return ['success'=>false,'message'=>'Update failed','code'=>500];
         }
 
-        self::audit($crud, (int)$auth['user_id'], 'job_post', (int)$id['ok'], 'update', ['changes'=>$update]);
+        self::audit($crud, $actorId, 'job_post', (int)$id, 'update', ['fields'=>$data]);
 
-        return ['success'=>true, 'message'=>'Post updated', 'data'=>['id'=>(int)$id['ok']], 'code'=>200];
+        return ['success'=>true,'message'=>'Updated','data'=>['id'=>$id],'code'=>200];
     }
 
     public static function post_publish(array $p): array
@@ -179,6 +383,7 @@ class RecruitmentHandler
 
         $ok = $crud->update('job_posts', [
             'status'     => 'closed',
+            'closed_at'  => self::nowUtc(),   // ✅ eklendi
             'updated_at' => self::nowUtc(),
         ], ['id'=>$id['ok']]);
 
@@ -191,18 +396,34 @@ class RecruitmentHandler
 
     public static function post_detail(array $p): array
     {
-        $auth = Auth::requireAuth(); // public gösterim kurgulanabilir; şimdilik auth zorunlu
+        $auth = Auth::requireAuth(); // şimdilik public değil
         $crud = new Crud((int)$auth['user_id']);
 
         $id = self::require_int($p['id'] ?? null, 'id');
         if (isset($id['success'])) return $id;
 
-        $rows = $crud->read('job_posts', ['id'=>$id['ok']], ['*'], true);
-        if (!$rows) return ['success'=>false, 'message'=>'Post not found', 'code'=>404];
-        $post = $rows[0];
+        // JOIN: position_catalog → area/department/name/description
+        $row = $crud->query("
+            SELECT 
+                jp.*,
+                pc.area        AS position_area,
+                pc.department  AS position_department,
+                pc.name        AS position_name,
+                pc.description AS position_description
+            FROM job_posts jp
+            LEFT JOIN position_catalog pc ON pc.id = jp.position_id
+            WHERE jp.id = :id
+            LIMIT 1
+        ", [':id' => $id['ok']]);
 
-        // Yayınlanmamışsa görmeye izin var mı?
-        if ($post['status'] !== 'published') {
+        if (!$row) {
+            return ['success'=>false, 'message'=>'Post not found', 'code'=>404];
+        }
+
+        $post = $row[0];
+
+        // Yayınlanmamışsa şirket içi görüntüleme izni iste
+        if ((string)$post['status'] !== 'published') {
             Gate::check('recruitment.post.view', (int)$post['company_id']);
         }
 
@@ -215,20 +436,31 @@ class RecruitmentHandler
 
         $id = self::require_int($p['id'] ?? null, 'id');
         if (isset($id['success'])) return $id;
-        $recent = max(0, (int)($p['recent'] ?? 5)); // son X başvuru
+        $recent = max(0, (int)($p['recent'] ?? 5));
 
-        // İlanı çek
-        $rows = $crud->read('job_posts', ['id'=>$id['ok']], ['*'], true);
-        if (!$rows) return ['success'=>false, 'message'=>'Post not found', 'code'=>404];
-        $post = $rows[0];
+        // JOIN: position_catalog
+        $row = $crud->query("
+            SELECT 
+                jp.*,
+                pc.area        AS position_area,
+                pc.department  AS position_department,
+                pc.name        AS position_name,
+                pc.description AS position_description
+            FROM job_posts jp
+            LEFT JOIN position_catalog pc ON pc.id = jp.position_id
+            WHERE jp.id = :id
+            LIMIT 1
+        ", [':id' => $id['ok']]);
 
+        if (!$row) return ['success'=>false, 'message'=>'Post not found', 'code'=>404];
+
+        $post = $row[0];
         $companyId = (int)$post['company_id'];
-        // İzin: ilan görüntüleme
+
+        // İç görünüm izni
         Gate::check('recruitment.post.view', $companyId);
 
-        // Başvuru istatistikleri (bu ilan için)
-        Gate::check('recruitment.app.view_company', $companyId); // şirket içi başvurulara erişim
-
+        // --- (devamı aynen) istatistikler + recent ---
         $statsRows = $crud->query(
             "SELECT status, COUNT(*) c
             FROM applications
@@ -251,7 +483,6 @@ class RecruitmentHandler
         $activeSet = ['submitted','under_review','shortlisted','interview','offered'];
         $active = 0; foreach ($activeSet as $st) $active += $by[$st];
 
-        // Son başvurular
         $recentItems = [];
         if ($recent > 0) {
             $recentItems = $crud->query(
@@ -287,59 +518,226 @@ class RecruitmentHandler
 
         $companyId = isset($p['company_id']) ? (int)$p['company_id'] : null;
         $status    = isset($p['status']) ? (string)$p['status'] : null;
-        $q         = trim((string)($p['q'] ?? ''));
-        $page      = max(1, (int)($p['page'] ?? 1));
-        $perPage   = min(100, max(1, (int)($p['per_page'] ?? 25)));
-        $offset    = ($page - 1) * $perPage;
+
+        $q = isset($p['q']) ? trim((string)$p['q'])
+            : (isset($p['query']) ? trim((string)$p['query']) : '');
+
+        $page    = max(1, (int)($p['page'] ?? 1));
+        $perPage = min(100, max(1, (int)($p['per_page'] ?? 25)));
+        $offset  = ($page - 1) * $perPage;
+
+        // Sadece bu izne bakıyoruz (iç listeleme için)
+        $isInternalViewer = ($companyId && $companyId > 0)
+            ? Gate::allows('recruitment.post.view', $companyId)
+            : false;
+
+        $allowedStatuses = ['draft','published','closed','archived'];
+        if ($status !== null && !in_array($status, $allowedStatuses, true)) {
+            $status = null;
+        }
 
         $params = [];
-        $whereSql = '1=1';
+        $w = ['1=1'];
 
-        if ($companyId) {
-            $whereSql .= ' AND company_id = :cid';
+        if ($companyId && $companyId > 0) {
+            $w[] = 'company_id = :cid';
             $params[':cid'] = $companyId;
         }
 
-        $canSeeAll = false;
-        if ($companyId) {
-            // şirket içi tüm statülerde listeleme izni var mı?
-            $canSeeAll = Gate::allows('recruitment.post.view', $companyId);
+        if ($isInternalViewer) {
+            if ($status !== null) {
+                $w[] = 'status = :st';
+                $params[':st'] = $status;
+            }
+        } else {
+            $w[] = 'status = :st';
+            $params[':st'] = 'published';
         }
 
-        if ($status) {
-            $whereSql .= ' AND status = :st';
-            $params[':st'] = $status;
-        } else {
-            // İzinsiz genel liste: sadece published
-            if (!$canSeeAll) {
-                $whereSql .= " AND status = 'published'";
-            }
-        }
 
         if ($q !== '') {
-            $whereSql .= ' AND (title LIKE :q OR description LIKE :q)';
+            $w[] = '(title LIKE :q OR description LIKE :q)';
             $params[':q'] = '%'.$q.'%';
         }
 
-        $rows = $crud->query("
+        $whereSql = implode(' AND ', $w);
+
+        $limit = (int)$perPage;
+        $off   = (int)$offset;
+
+        $sql = "
             SELECT SQL_CALC_FOUND_ROWS *
             FROM job_posts
             WHERE $whereSql
             ORDER BY id DESC
-            LIMIT :lim OFFSET :off
-        ", array_merge($params, [
-            ':lim' => $perPage,
-            ':off' => $offset,
-        ]));
+            LIMIT $limit OFFSET $off
+        ";
 
-        $total = $crud->query("SELECT FOUND_ROWS() AS t")[0]['t'] ?? 0;
+        // ---- teşhis logları
+        Logger::info("Recruitment.post_list mode=" . ($isInternalViewer ? 'internal' : 'public')
+            . " company_id=" . ($companyId ?? 'NULL')
+            . " status=" . ($status ?? 'NULL')
+            . " q='$q'");
+
+        Logger::info("SQL: $sql ; PARAMS: " . json_encode($params, JSON_UNESCAPED_UNICODE));
+
+        $rows  = $crud->query($sql, $params);
+        $total = (int)($crud->query("SELECT FOUND_ROWS() AS t")[0]['t'] ?? 0);
+
+        Logger::info("RESULT: items=" . count($rows) . " total=$total");
+
+        return [
+            'success' => true,
+            'message' => 'OK',
+            'data'    => [
+                'items'     => $rows,
+                'page'      => $page,
+                'per_page'  => $perPage,
+                'total'     => $total,
+            ],
+            'code'    => 200,
+        ];
+    }
+
+    public static function post_public_detail(array $p): array
+    {
+        $auth = Auth::requireAuth();
+        $crud = new Crud((int)$auth['user_id']);
+
+        $id = (int)($p['id'] ?? 0);
+        if ($id <= 0) {
+            return ['success'=>false,'message'=>'Invalid id','code'=>422];
+        }
+
+        $sql = "
+            SELECT
+                jp.id, jp.company_id, jp.position_id,
+                jp.title, jp.description, jp.area, jp.location,
+                jp.employment_type,
+                jp.age_min, jp.age_max,
+                jp.salary_min, jp.salary_max, jp.salary_currency, jp.salary_rate_unit,
+                jp.contract_duration_months, jp.probation_months,
+                jp.rotation_on_months, jp.rotation_off_months,
+                jp.rotation_bonus_type, jp.rotation_bonus_value,
+                jp.city_id,
+                jp.benefits_json, jp.obligations_json,
+                jp.status, jp.visibility,
+                jp.created_at, jp.published_at, jp.updated_at,
+                c.name  AS company_name,
+                c.logo  AS company_logo,
+                c2.city AS city_name,
+                c2.iso2 AS city_iso2,
+                c2.iso3 AS city_iso3
+            FROM job_posts jp
+            LEFT JOIN companies c ON c.id = jp.company_id
+            LEFT JOIN cities    c2 ON c2.id = jp.city_id
+            WHERE jp.id = :id
+            AND jp.status = 'published'
+            AND jp.visibility = 'public'
+            AND jp.deleted_at IS NULL
+            LIMIT 1
+        ";
+
+        $rows = $crud->query($sql, [':id' => $id]);
+        if (!$rows || count($rows) === 0) {
+            return ['success'=>false,'message'=>'Not found','code'=>404];
+        }
+
+        return ['success'=>true,'message'=>'OK','data'=>$rows[0],'code'=>200];
+    }
+    public static function post_public_open_list(array $p): array
+    {
+        // ⬇️ public: auth zorunlu değil
+        // $auth = Auth::requireAuth();
+        // $crud = new Crud((int)$auth['user_id']);
+        $crud = new Crud(0, false); // sadece read yapıyoruz
+
+        $limit = (int)($p['limit'] ?? 10);
+        $limit = max(1, min(50, $limit));
+
+        $q = isset($p['q']) ? trim((string)$p['q'])
+            : (isset($p['query']) ? trim((string)$p['query']) : '');
+
+        $params = [];
+        $w = ["jp.status = 'published'", "jp.visibility = 'public'", 'jp.deleted_at IS NULL'];
+
+        if ($q !== '') {
+            $w[] = '(jp.title LIKE :q OR jp.description LIKE :q)';
+            $params[':q'] = '%'.$q.'%';
+        }
+
+        $whereSql = implode(' AND ', $w);
+
+        $sql = "
+            SELECT
+                jp.id, jp.title, jp.updated_at, jp.published_at, jp.created_at,
+                jp.location, jp.city_id,
+                jp.salary_min, jp.salary_max, jp.salary_currency, jp.salary_rate_unit,
+                jp.rotation_on_months, jp.rotation_off_months,
+                c.name  AS company_name,
+                c.logo  AS company_logo,
+                c2.city AS city_name,
+                c2.iso2 AS city_iso2
+            FROM job_posts jp
+            LEFT JOIN companies c ON c.id = jp.company_id
+            LEFT JOIN cities    c2 ON c2.id = jp.city_id
+            WHERE $whereSql
+            ORDER BY COALESCE(jp.updated_at, jp.published_at, jp.created_at) DESC
+            LIMIT $limit
+        ";
+
+        // 🔎 Teşhis logları
+        Logger::info("OpenList q='$q' limit=$limit");
+        Logger::info("SQL: $sql ; PARAMS: " . json_encode($params, JSON_UNESCAPED_UNICODE));
+
+        $rows = $crud->query($sql, $params);
+        Logger::info("RESULT: items=" . count($rows));
 
         return [
             'success'=>true,
             'message'=>'OK',
-            'data'=>['items'=>$rows, 'page'=>$page, 'per_page'=>$perPage, 'total'=>(int)$total],
+            'data'=>['items'=>$rows,'total'=>count($rows)],
             'code'=>200
         ];
+    }
+
+    public static function app_create(array $p): array
+    {
+        $auth = Auth::requireAuth();
+        $crud = new Crud((int)$auth['user_id']);
+
+        $cid = self::require_int($p['company_id'] ?? null, 'company_id');
+        if (isset($cid['success'])) return $cid;
+
+        $pid = self::require_int($p['job_post_id'] ?? null, 'job_post_id');
+        if (isset($pid['success'])) return $pid;
+
+        $uid = isset($p['user_id']) ? (int)$p['user_id'] : (int)$auth['user_id'];
+
+        Gate::check('recruitment.app.create', (int)$cid['ok']);
+
+        $now = self::nowUtc();
+        $id = $crud->create('applications', [
+            'company_id'      => (int)$cid['ok'],
+            'job_post_id'     => (int)$pid['ok'],
+            'user_id'         => $uid,
+            'status'          => 'submitted',
+            'created_at'      => $now,
+            'updated_at'      => $now,
+            // İsterseniz şunları da ekleyin (kolonlar varsa):
+            // 'cover_letter' => isset($p['cover_letter']) ? (string)$p['cover_letter'] : null,
+            // 'cv_snapshot'  => isset($p['cv_snapshot']) ? json_encode($p['cv_snapshot']) : null,
+            // 'attachments'  => isset($p['attachments']) ? json_encode($p['attachments']) : null,
+        ]);
+
+        if (!$id) return ['success'=>false,'message'=>'Create failed','code'=>500];
+
+        self::audit($crud, (int)$auth['user_id'], 'application', (int)$id, 'create', [
+            'job_post_id' => (int)$pid['ok'],
+            'user_id'     => $uid,
+        ]);
+
+        return ['success'=>true,'message'=>'Created','data'=>['id'=>(int)$id],'code'=>200];
     }
 
     /* ===========================
@@ -686,24 +1084,20 @@ class RecruitmentHandler
         }
         $post = $rows[0];
 
-        // İzin kontrolü:
-        // Eğer sistemde 'recruitment.post.archive' izni tanımlı ve kullanıcının erişimi varsa onu kullan.
-        // Geçiş sürecinde bu izin yoksa (veya tanımlı değilse) 'recruitment.post.close' ile geriye dönük uyumluluk sağla.
         try {
             Gate::check('recruitment.post.archive', (int)$post['company_id']);
         } catch (\Throwable $e) {
-            // Archive izni yoksa/henüz tanımlı değilse close izni ile koru (geçici geri uyumluluk)
             Gate::check('recruitment.post.close', (int)$post['company_id']);
         }
 
-        // Sadece kapalı ilanlar arşivlenebilir
         if ((string)$post['status'] !== 'closed') {
             return ['success'=>false, 'message'=>'Only closed posts can be archived', 'code'=>409];
         }
 
         $ok = $crud->update('job_posts', [
-            'status'     => 'archived',
-            'updated_at' => self::nowUtc(),
+            'status'      => 'archived',
+            'archived_at' => self::nowUtc(),   // ✅ eklendi
+            'updated_at'  => self::nowUtc(),
         ], ['id'=>$id['ok']]);
 
         if (!$ok) {
@@ -726,6 +1120,20 @@ class RecruitmentHandler
             'code'    => 200
         ];
     }
+
+    public static function post_public_published_count(array $p): array
+    {
+        $crud = new Crud();
+        $companyId = self::require_int($p['company_id'] ?? null, 'company_id');
+        if (isset($companyId['success'])) return $companyId;
+
+        $rows = $crud->count('job_posts', ['company_id' => $companyId['ok'], 'status' => 'published']);
+
+        $total = (int)($rows ?? 0);
+        Logger::info("Public published posts count for company_id={$companyId['ok']} is $total");
+        return ['success' => true, 'data' => ['total' => $total], 'message' => 'Public published posts count',  'code' => 200];
+    }
+
     public static function post_stats(array $p): array
     {
         $auth = Auth::requireAuth();
@@ -737,12 +1145,7 @@ class RecruitmentHandler
         // Şirket içi ilanları görebilen herkes istatistik de görebilsin
         Gate::check('recruitment.post.view', $companyId['ok']);
 
-        $rows = $crud->query("
-            SELECT status, COUNT(*) as c
-            FROM job_posts
-            WHERE company_id = :cid
-            GROUP BY status
-        ", [':cid' => $companyId['ok']]);
+        $rows = $crud->query("SELECT status, COUNT(*) as c FROM job_posts WHERE company_id = :cid GROUP BY status", [':cid' => $companyId['ok']]);
 
         $by = ['draft'=>0,'published'=>0,'closed'=>0,'archived'=>0];
         $total = 0;
@@ -812,5 +1215,163 @@ class RecruitmentHandler
             'active'=>$active,
             'unassigned'=>(int)$unassigned,
         ],'code'=>200];
-    }   
+    }
+
+    
+    public static function list_mine(array $p): array {
+        $auth = Auth::requireAuth();
+        $userId = (int)$auth['user_id'];
+
+        $page    = max(1, (int)($p['page'] ?? 1));
+        $perPage = in_array((int)($p['per_page'] ?? 25), [25,50,100]) ? (int)$p['per_page'] : 25;
+        $status  = isset($p['status']) ? (string)$p['status'] : null;
+        $q       = isset($p['q']) ? trim((string)$p['q']) : null;
+        $company = isset($p['company_id']) ? (int)$p['company_id'] : null;
+
+        $crud = new Crud($userId);
+        $where = [['user_id','=',$userId]];
+        if ($status)  $where[] = ['status','=',$status];
+        if ($company) $where[] = ['company_id','=',$company];
+
+        $filters = ['q'=>$q ? ['columns'=>['job_title','company_name','note'], 'value'=>$q] : null];
+
+        $total = $crud->count('applications', $where, $filters);
+        $items = $crud->read('applications', $where, ['*'], true, [
+        'orderBy'=>['created_at'=>'DESC'],
+        'limit'=>$perPage, 'offset'=>($page-1)*$perPage,
+        'search'=>$filters['q'] ?? null
+        ]);
+
+        return [
+        'success'=>true, 'message'=>'OK', 'code'=>200,
+        'data'=>[
+            'items'=>$items, 'page'=>$page, 'per_page'=>$perPage,
+            'total'=>$total, 'pages'=> (int)ceil($total / $perPage)
+        ]
+        ];
+    }
+
+    public static function detail_mine(array $params): array
+    {
+        $auth = Auth::requireAuth();
+        $userId = (int)$auth['user_id'];
+        $appId  = isset($params['application_id']) ? (int)$params['application_id'] : 0;
+
+        if ($appId <= 0) {
+            return ['success'=>false, 'message'=>'application_id is required', 'code'=>422];
+        }
+
+        $crud = new Crud($userId);
+
+        // Sadece kullanıcıya ait başvuruyu döndür (join ile başlıklar)
+        $row = $crud->query("
+            SELECT 
+                a.id,
+                a.user_id,
+                a.company_id,
+                a.job_id,
+                a.status,
+                a.note,
+                a.created_at,
+                a.updated_at,
+                j.title        AS job_title,
+                c.name         AS company_name
+            FROM applications a
+            LEFT JOIN job_posts j ON j.id = a.job_id
+            LEFT JOIN companies c ON c.id = a.company_id
+            WHERE a.id = :id AND a.user_id = :u
+            LIMIT 1
+        ", [':id'=>$appId, ':u'=>$userId]);
+
+        if (!$row) {
+            // Sahip değilse de bulunamadı diyelim (bilgi sızdırmayalım)
+            return ['success'=>false, 'message'=>'Application not found', 'code'=>404];
+        }
+
+        return [
+            'success'=>true,
+            'message'=>'OK',
+            'code'=>200,
+            'data'=>[
+                'application'=>$row
+            ]
+        ];
+    }
+
+    public static function withdraw(array $params): array
+    {
+        $auth   = Auth::requireAuth();
+        $userId = (int)$auth['user_id'];
+        $appId  = isset($params['application_id']) ? (int)$params['application_id'] : 0;
+
+        if ($appId <= 0) {
+            return ['success'=>false, 'message'=>'application_id is required', 'code'=>422];
+        }
+
+        $crud = new Crud($userId);
+
+        // Mevcut kayıt + sahiplik + mevcut status
+        $app = $crud->query("
+            SELECT id, user_id, status, company_id, job_id
+            FROM applications
+            WHERE id = :id AND user_id = :u
+            LIMIT 1
+        ", [':id'=>$appId, ':u'=>$userId]);
+
+        if (!$app) {
+            return ['success'=>false, 'message'=>'Application not found', 'code'=>404];
+        }
+
+        $status = (string)$app['status'];
+        $allowed = ['pending', 'preApproved']; // gereksinime göre genişletilebilir
+
+        if (!in_array($status, $allowed, true)) {
+            return ['success'=>false, 'message'=>'Application cannot be withdrawn in current status', 'code'=>422];
+        }
+
+        // Güncelle
+        $ok = $crud->update('applications', [
+            'status'     => 'withdrawn',
+            'updated_at' => date('Y-m-d H:i:s'),
+        ], [
+            ['id','=',$appId],
+            ['user_id','=',$userId],
+        ]);
+
+        if (!$ok) {
+            return ['success'=>false, 'message'=>'Failed to withdraw', 'code'=>500];
+        }
+
+        // Audit
+        try {
+            $crud->create('audit_events', [
+                'actor_id'   => $userId,
+                'entity_type'=> 'application',
+                'entity_id'  => (int)$appId,
+                'action'     => 'withdraw',
+                'meta'       => json_encode([
+                    'from'=>$status,
+                    'to'=>'withdrawn',
+                    'company_id'=>(int)$app['company_id'],
+                    'job_id'=>(int)$app['job_id'],
+                ], JSON_UNESCAPED_UNICODE),
+                'ip'         => $_SERVER['REMOTE_ADDR'] ?? null,
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
+                'created_at' => date('Y-m-d H:i:s'),
+            ]);
+        } catch (\Throwable $e) {
+            Logger::error('audit_events insert failed in withdraw', ['e'=>$e->getMessage()]);
+            // audit başarısız ise akışı bozmayalım
+        }
+
+        return [
+            'success'=>true,
+            'message'=>'Application withdrawn',
+            'code'=>200,
+            'data'=>[
+                'id'     => (int)$appId,
+                'status' => 'withdrawn'
+            ]
+        ];
+    }
 }

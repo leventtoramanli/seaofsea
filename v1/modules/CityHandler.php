@@ -20,7 +20,7 @@ class CityHandler
         $bind  = [];
 
         if ($q !== '') {
-            $where[] = 'name LIKE CONCAT("%", :q, "%")';
+            $where[] = 'city LIKE CONCAT("%", :q, "%")';
             $bind[':q'] = $q;
         }
         if ($iso3 !== '') {
@@ -32,16 +32,16 @@ class CityHandler
 
         $limit = (int)$limit;
         $rows = $crud->query("
-            SELECT id, name, iso3
+            SELECT id, city, iso3
             FROM cities
             $whereSql
-            ORDER BY name ASC
+            ORDER BY city ASC
             LIMIT $limit
         ", $bind) ?: [];
 
         $items = [];
         foreach ($rows as $r) {
-            $name = (string)$r['name'];
+            $name = (string)$r['city'];
             // Başlık düzeni: İlk harfler büyük
             $name = mb_convert_case($name, MB_CASE_TITLE, 'UTF-8');
             $iso  = strtoupper((string)$r['iso3']);

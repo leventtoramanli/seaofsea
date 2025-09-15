@@ -226,6 +226,118 @@ class Crud
         return array_keys($arr) !== range(0, count($arr) - 1);
     }
 
+    public function count(string $table, array $conditions = []): int|false
+    {
+        // read ile aynı güvenlik/erişim sözleşmesi
+        if (!$this->isAllowedTable($table) || !$this->hasPermission('read', $table)) {
+            return false;
+        }
+
+        $sql = "SELECT COUNT(*) AS cnt FROM `{$table}`";
+        $whereParts = [];
+        $params = [];
+        $idx = 0;
+
+        foreach ($conditions as $col => $val) {
+            if (!$this->isValidColumn($table, $col)) {
+                return false;
+            }
+
+            if (!is_array($val)) {
+                $ph = ":{$col}";
+                $whereParts[] = "`{$col}` = {$ph}";
+                $params[$col] = $val;
+                continue;
+            }
+
+            $op = strtoupper((string)($val[0] ?? ''));
+            switch ($op) {
+                case 'IN':
+                case 'NOT IN':
+                    $list = (array)($val[1] ?? []);
+                    if (empty($list)) {
+                        $whereParts[] = ($op === 'IN') ? '1=0' : '1=1';
+                        break;
+                    }
+                    $phs = [];
+                    foreach ($list as $item) {
+                        $phName = "{$col}_{$idx}";
+                        $phs[] = ":{$phName}";
+                        $params[$phName] = $item;
+                        $idx++;
+                    }
+                    $whereParts[] = "`{$col}` {$op} (" . implode(',', $phs) . ")";
+                    break;
+
+                case 'LIKE':
+                    $ph = ":{$col}_like_{$idx}";
+                    $whereParts[] = "`{$col}` LIKE {$ph}";
+                    $params["{$col}_like_{$idx}"] = $val[1] ?? '';
+                    $idx++;
+                    break;
+
+                case 'BETWEEN':
+                    $range = (array)($val[1] ?? []);
+                    $fromPh = ":{$col}_from_{$idx}";
+                    $toPh   = ":{$col}_to_{$idx}";
+                    $whereParts[] = "`{$col}` BETWEEN {$fromPh} AND {$toPh}";
+                    $params["{$col}_from_{$idx}"] = $range[0] ?? null;
+                    $params["{$col}_to_{$idx}"]   = $range[1] ?? null;
+                    $idx++;
+                    break;
+
+                case 'IS NULL':
+                case 'IS NOT NULL':
+                    $whereParts[] = "`{$col}` {$op}";
+                    break;
+
+                case '>':
+                case '>=':
+                case '<':
+                case '<=':
+                case '!=':
+                case '<>':
+                case '=':
+                    $ph = ":{$col}_cmp_{$idx}";
+                    $whereParts[] = "`{$col}` {$op} {$ph}";
+                    $params["{$col}_cmp_{$idx}"] = $val[1] ?? null;
+                    $idx++;
+                    break;
+
+                default:
+                    $ph = ":{$col}_eq_{$idx}";
+                    $whereParts[] = "`{$col}` = {$ph}";
+                    $params["{$col}_eq_{$idx}"] = $val[1] ?? null;
+                    $idx++;
+                    break;
+            }
+        }
+
+        if (!empty($whereParts)) {
+            $sql .= ' WHERE ' . implode(' AND ', $whereParts);
+        }
+
+        try {
+            $stmt = $this->pdo->prepare($sql);
+            foreach ($params as $k => $v) {
+                $type = is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR;
+                $stmt->bindValue(':' . $k, $v, $type);
+            }
+            $stmt->execute();
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return (int)($row['cnt'] ?? 0);
+        } catch (PDOException $e) {
+            Logger::error("COUNT failed in {$table}", [
+                'sql'   => $sql,
+                'params'=> $params,
+                'error' => $e->getMessage(),
+                'code'  => $e->getCode(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return false;
+        }
+    }
+
     public function read(
         string $table,
         array $conditions = [],
@@ -234,7 +346,8 @@ class Crud
         array $orderBy = [],
         array $groupBy = [],
         array $options = []
-    ): mixed {
+    ): mixed 
+    {
         if (!$this->isAllowedTable($table) || !$this->hasPermission('read', $table)) {
             return false;
         }
