@@ -31,7 +31,7 @@ class Gate
 
         // Email verify kontrolü
         if ((int)($user['is_verified'] ?? 0) === 0) {
-            Response::error("Email verification is required to perform this action.", 403);
+            Response::error("Email verification is required to perform this action.", 4031);
         }
 
         // İzin kontrolü

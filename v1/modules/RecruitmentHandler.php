@@ -102,6 +102,84 @@ class RecruitmentHandler
         return in_array($s, ['submitted','under_review','shortlisted','interview','offered'], true);
     }
 
+        // === CV helpers ===
+    private static function json_try_decode($v) {
+        if ($v === null) return null;
+        if (is_array($v)) return $v;
+        if (!is_string($v)) return null;
+        $d = json_decode($v, true);
+        return (json_last_error() === JSON_ERROR_NONE) ? $d : null;
+    }
+
+    private static function build_cv_snapshot(Crud $crud, int $userId): array {
+        // users
+        $u = $crud->read('users', ['id'=>$userId], [
+            'id','name','surname','email','user_image','bio','is_verified'
+        ], false) ?: [];
+
+        // user_cv
+        $cv = $crud->read('user_cv', ['user_id'=>$userId], [
+            'professional_title','country_id','city_id','address','zip_code',
+            'phone','social','language','education','work_experience','skills',
+            'certificates','seafarer_info','references'
+        ], false) ?: [];
+
+        $snapshot = [
+            'user' => [
+                'id'          => (int)($u['id'] ?? $userId),
+                'name'        => (string)($u['name'] ?? ''),
+                'surname'     => (string)($u['surname'] ?? ''),
+                'email'       => (string)($u['email'] ?? ''),
+                'avatar'      => $u['user_image'] ?? null,
+                'bio'         => $u['bio'] ?? null,
+                'is_verified' => (int)($u['is_verified'] ?? 0),
+            ],
+            'cv' => [
+                'title'      => $cv['professional_title'] ?? null,
+                'country_id' => isset($cv['country_id']) ? (int)$cv['country_id'] : null,
+                'city_id'    => isset($cv['city_id'])    ? (int)$cv['city_id']    : null,
+                'address'    => $cv['address'] ?? null,
+                'zip_code'   => $cv['zip_code'] ?? null,
+                'phone'      => self::json_try_decode($cv['phone'] ?? null) ?? [],
+                'social'     => self::json_try_decode($cv['social'] ?? null) ?? [],
+                'languages'  => self::json_try_decode($cv['language'] ?? null) ?? [],
+                'education'  => self::json_try_decode($cv['education'] ?? null) ?? [],
+                'experience' => self::json_try_decode($cv['work_experience'] ?? null) ?? [],
+                'skills'     => self::json_try_decode($cv['skills'] ?? null) ?? [],
+                'certs'      => self::json_try_decode($cv['certificates'] ?? null) ?? [],
+                'seafarer'   => self::json_try_decode($cv['seafarer_info'] ?? null) ?? null,
+                'references' => self::json_try_decode($cv['references'] ?? null) ?? [],
+            ],
+            'version' => 1,
+            'generated_at' => self::nowUtc(),
+        ];
+
+        return $snapshot;
+    }
+
+    private static function normalize_attachments($raw): ?array {
+        // Beklenen format: [{name, url, size?, type?, ext?, mime?}, ...]
+        $arr = is_array($raw) ? $raw : self::json_try_decode($raw);
+        if (!is_array($arr)) return null;
+
+        $out = [];
+        foreach ($arr as $i) {
+            if (!is_array($i)) continue;
+            $name = trim((string)($i['name'] ?? ''));
+            $url  = trim((string)($i['url']  ?? ''));
+            if ($name === '' || $url === '') continue;
+            $item = [
+                'name' => $name,
+                'url'  => $url,
+            ];
+            foreach (['size','type','ext','mime'] as $k) {
+                if (isset($i[$k])) $item[$k] = $i[$k];
+            }
+            $out[] = $item;
+        }
+        return $out ?: null;
+    }
+
     /* ===========================
      * POST (İLAN) ACTIONS
      * =========================== */
@@ -601,8 +679,11 @@ class RecruitmentHandler
 
     public static function post_public_detail(array $p): array
     {
-        $auth = Auth::requireAuth();
-        $crud = new Crud((int)$auth['user_id']);
+        // ❌ $auth = Auth::requireAuth();
+        // ❌ $crud = new Crud((int)$auth['user_id']);
+
+        // ✅ public read-only
+        $crud = new Crud(0, false);
 
         $id = (int)($p['id'] ?? 0);
         if ($id <= 0) {
@@ -620,7 +701,7 @@ class RecruitmentHandler
                 jp.rotation_on_months, jp.rotation_off_months,
                 jp.rotation_bonus_type, jp.rotation_bonus_value,
                 jp.city_id,
-                jp.benefits_json, jp.obligations_json,
+                jp.benefits_json, jp.obligations_json, jp.requirements_json,
                 jp.status, jp.visibility,
                 jp.created_at, jp.published_at, jp.updated_at,
                 c.name  AS company_name,
@@ -743,7 +824,6 @@ class RecruitmentHandler
     /* ===========================
      * APPLICATION (BAŞVURU) ACTIONS
      * =========================== */
-
     public static function app_submit(array $p): array
     {
         $auth = Auth::requireAuth();
@@ -756,8 +836,23 @@ class RecruitmentHandler
 
         $jobPostId = isset($p['job_post_id']) ? (int)$p['job_post_id'] : null;
         $cover     = trim((string)($p['cover_letter'] ?? ''));
-        $cv        = isset($p['cv_snapshot']) ? json_encode($p['cv_snapshot'], JSON_UNESCAPED_UNICODE) : null;
-        $attach    = isset($p['attachments']) ? json_encode($p['attachments'], JSON_UNESCAPED_UNICODE) : null;
+
+        // attachments normalize
+        $attachmentsArr = self::normalize_attachments($p['attachments'] ?? null);
+        $attach = $attachmentsArr ? json_encode($attachmentsArr, JSON_UNESCAPED_UNICODE) : null;
+
+        // cv_snapshot param (isteğe bağlı)
+        $cvPayload = $p['cv_snapshot'] ?? null;
+
+        // include_cv_snapshot: 1 ise ve cv_snapshot gönderilmemişse DB'den üret
+        $includeFlag = (int)($p['include_cv_snapshot'] ?? 0);
+        if ($includeFlag === 1 && $cvPayload === null) {
+            $cvPayload = self::build_cv_snapshot($crud, (int)$auth['user_id']);
+        }
+
+        $cv = ($cvPayload !== null)
+            ? json_encode($cvPayload, JSON_UNESCAPED_UNICODE)
+            : null;
 
         // aynı user + job için aktif başvuru var mı?
         if ($jobPostId) {
@@ -772,22 +867,34 @@ class RecruitmentHandler
             }
         }
 
+        $now = self::nowUtc();
         $ins = [
             'user_id'      => (int)$auth['user_id'],
             'company_id'   => $companyId['ok'],
             'job_post_id'  => $jobPostId,
-            'cover_letter' => $cover,
-            'cv_snapshot'  => $cv,
-            'attachments'  => $attach,
+            'cover_letter' => $cover !== '' ? $cover : null,
+            'cv_snapshot'  => $cv,       // NULL olabilir
+            'attachments'  => $attach,   // NULL olabilir
             'status'       => 'submitted',
-            'created_at'   => self::nowUtc(),
-            'updated_at'   => self::nowUtc(),
+            'created_at'   => $now,
+            'updated_at'   => $now,
         ];
 
         $id = $crud->create('applications', $ins);
         if (!$id) return ['success'=>false, 'message'=>'Submit failed', 'code'=>500];
 
-        self::audit($crud, (int)$auth['user_id'], 'application', (int)$id, 'submit', ['payload'=>$ins]);
+        self::audit(
+            $crud,
+            (int)$auth['user_id'],
+            'application',
+            (int)$id,
+            'submit',
+            [
+                'has_cv_snapshot' => ($cv !== null),
+                'attachments_count' => is_array($attachmentsArr) ? count($attachmentsArr) : 0,
+                'include_cv_snapshot_flag' => $includeFlag,
+            ]
+        );
 
         return ['success'=>true, 'message'=>'Application submitted', 'data'=>['id'=>(int)$id], 'code'=>200];
     }
@@ -842,20 +949,27 @@ class RecruitmentHandler
         $auth = Auth::requireAuth();
         $crud = new Crud((int)$auth['user_id']);
 
-        $userId = isset($p['user_id']) ? (int)$p['user_id'] : (int)$auth['user_id'];
-        $isSelf = ($userId === (int)$auth['user_id']);
+        $requestedUserId = isset($p['user_id']) ? (int)$p['user_id'] : (int)$auth['user_id'];
+        $isSelf = ($requestedUserId === (int)$auth['user_id']) && !isset($p['company_id']);
 
-        if (!$isSelf) {
-            // başka birinin başvurularını görmek için şirket ve permission gerekir
-            $companyId = self::require_int($p['company_id'] ?? null, 'company_id');
-            if (isset($companyId['success'])) return $companyId;
-            Gate::check('recruitment.app.view_company', $companyId['ok']);
+        if ($isSelf) {
+            // sayfalama/filtre/FTS destekli yeni uç
+            return self::list_mine($p);
         }
 
-        $rows = $crud->read('applications', ['user_id'=>$userId], ['id','company_id','job_post_id','reviewer_user_id','status','created_at','updated_at']);
+        // ↓↓↓ mevcut “başkasını şirket izniyle listele” mantığını olduğu gibi koru
+        $companyId = self::require_int($p['company_id'] ?? null, 'company_id');
+        if (isset($companyId['success'])) return $companyId;
+        Gate::check('recruitment.app.view_company', $companyId['ok']);
+
+        $rows = $crud->read(
+            'applications',
+            ['user_id' => $requestedUserId],
+            ['id','company_id','job_post_id','reviewer_user_id','status','created_at','updated_at']
+        );
+
         return ['success'=>true, 'message'=>'OK', 'data'=>['items'=>$rows], 'code'=>200];
     }
-
     public static function app_update_status(array $p): array
     {
         $auth = Auth::requireAuth();
@@ -1217,92 +1331,138 @@ class RecruitmentHandler
         ],'code'=>200];
     }
 
-    
+    public static function app_detail_mine(array $p): array {
+        return self::detail_mine($p);
+    }   
     public static function list_mine(array $p): array {
-        $auth = Auth::requireAuth();
-        $userId = (int)$auth['user_id'];
+        $auth    = Auth::requireAuth();
+        $userId  = (int)$auth['user_id'];
 
         $page    = max(1, (int)($p['page'] ?? 1));
-        $perPage = in_array((int)($p['per_page'] ?? 25), [25,50,100]) ? (int)$p['per_page'] : 25;
-        $status  = isset($p['status']) ? (string)$p['status'] : null;
-        $q       = isset($p['q']) ? trim((string)$p['q']) : null;
-        $company = isset($p['company_id']) ? (int)$p['company_id'] : null;
+        $perPage = min(100, in_array((int)($p['per_page'] ?? 25), [25,50,100]) ? (int)$p['per_page'] : 25);
+        $offset  = ($page - 1) * $perPage;
 
-        $crud = new Crud($userId);
-        $where = [['user_id','=',$userId]];
-        if ($status)  $where[] = ['status','=',$status];
-        if ($company) $where[] = ['company_id','=',$company];
+        // Çoklu status desteği
+        $statusParam = $p['status'] ?? null;
+        $statuses = is_array($statusParam)
+            ? array_values(array_filter($statusParam, fn($s)=>$s!=='' && $s!==null))
+            : ((isset($statusParam) && $statusParam!=='') ? [(string)$statusParam] : []);
 
-        $filters = ['q'=>$q ? ['columns'=>['job_title','company_name','note'], 'value'=>$q] : null];
+        $q        = isset($p['q']) ? trim((string)$p['q']) : '';
+        $company  = isset($p['company_id'])   ? (int)$p['company_id']   : null;
+        $jobPost  = isset($p['job_post_id'])  ? (int)$p['job_post_id']  : null;
 
-        $total = $crud->count('applications', $where, $filters);
-        $items = $crud->read('applications', $where, ['*'], true, [
-        'orderBy'=>['created_at'=>'DESC'],
-        'limit'=>$perPage, 'offset'=>($page-1)*$perPage,
-        'search'=>$filters['q'] ?? null
-        ]);
+        $crud  = new Crud($userId);
+        $w     = ["a.user_id = :uid"];
+        $bind  = [':uid' => $userId];
+
+        if ($company) { $w[] = "a.company_id = :cid";   $bind[':cid']   = $company; }
+        if ($jobPost) { $w[] = "a.job_post_id = :jpid"; $bind[':jpid']  = $jobPost; }
+
+        if ($statuses) {
+            $ph = [];
+            foreach ($statuses as $i=>$st) { $k=":s{$i}"; $ph[]=$k; $bind[$k]=$st; }
+            $w[] = "a.status IN (".implode(',', $ph).")";
+        }
+
+        if ($q !== '') {
+            // FULLTEXT (title, description) + cover_letter/tags LIKE
+            $w[]  = "( MATCH(j.title, j.description) AGAINST (:q IN NATURAL LANGUAGE MODE)
+                    OR a.cover_letter LIKE :qlike
+                    OR a.tags        LIKE :qlike )";
+            $bind[':q']     = $q;
+            $bind[':qlike'] = '%'.$q.'%';
+        }
+
+        $whereSql = 'WHERE '.implode(' AND ', $w);
+
+        // total
+        $sqlCount = "SELECT COUNT(*) AS c
+                    FROM applications a
+                    LEFT JOIN job_posts j ON j.id = a.job_post_id
+                    $whereSql";
+        $countRow = $crud->query($sqlCount, $bind);
+        $total    = (int) ((is_array($countRow[0] ?? null) ? $countRow[0]['c'] ?? 0 : ($countRow['c'] ?? 0)));
+
+        // items
+        $sql = "SELECT
+                    a.id, a.job_post_id, a.company_id, a.status, a.created_at, a.updated_at,
+                    j.title AS job_title,
+                    c.name  AS company_name
+                FROM applications a
+                LEFT JOIN job_posts j ON j.id = a.job_post_id
+                LEFT JOIN companies c ON c.id = a.company_id
+                $whereSql
+                ORDER BY a.created_at DESC
+                LIMIT {$perPage} OFFSET {$offset}";
+        $items = $crud->query($sql, $bind) ?: [];
 
         return [
-        'success'=>true, 'message'=>'OK', 'code'=>200,
-        'data'=>[
-            'items'=>$items, 'page'=>$page, 'per_page'=>$perPage,
-            'total'=>$total, 'pages'=> (int)ceil($total / $perPage)
-        ]
+            'success'=>true, 'message'=>'OK', 'code'=>200,
+            'data'=>[
+                'items'=>$items,
+                'page'=>$page, 'per_page'=>$perPage,
+                'total'=>$total, 'pages'=>(int)ceil($total / $perPage),
+            ]
         ];
     }
 
     public static function detail_mine(array $params): array
     {
-        $auth = Auth::requireAuth();
+        $auth   = Auth::requireAuth();
         $userId = (int)$auth['user_id'];
-        $appId  = isset($params['application_id']) ? (int)$params['application_id'] : 0;
-
+        $appId  = (int)($params['application_id'] ?? 0);
         if ($appId <= 0) {
             return ['success'=>false, 'message'=>'application_id is required', 'code'=>422];
         }
 
         $crud = new Crud($userId);
 
-        // Sadece kullanıcıya ait başvuruyu döndür (join ile başlıklar)
         $row = $crud->query("
             SELECT 
-                a.id,
-                a.user_id,
-                a.company_id,
-                a.job_id,
-                a.status,
-                a.note,
-                a.created_at,
-                a.updated_at,
-                j.title        AS job_title,
-                c.name         AS company_name
+                a.id, a.user_id, a.company_id, a.job_post_id, a.status,
+                a.cover_letter, a.tags, a.created_at, a.updated_at,
+                j.title AS job_title,
+                c.name  AS company_name
             FROM applications a
-            LEFT JOIN job_posts j ON j.id = a.job_id
+            LEFT JOIN job_posts j ON j.id = a.job_post_id
             LEFT JOIN companies c ON c.id = a.company_id
             WHERE a.id = :id AND a.user_id = :u
             LIMIT 1
         ", [':id'=>$appId, ':u'=>$userId]);
 
-        if (!$row) {
-            // Sahip değilse de bulunamadı diyelim (bilgi sızdırmayalım)
+        if (!$row || !is_array($row) || empty($row)) {
             return ['success'=>false, 'message'=>'Application not found', 'code'=>404];
         }
+        $application = is_array($row[0] ?? null) ? $row[0] : $row;
+
+        $history = $crud->query("
+            SELECT old_status, new_status, changed_by, note, created_at
+            FROM application_status_history
+            WHERE application_id = :id
+            ORDER BY created_at DESC, id DESC
+        ", [':id'=>$appId]) ?: [];
 
         return [
-            'success'=>true,
-            'message'=>'OK',
-            'code'=>200,
+            'success'=>true, 'message'=>'OK', 'code'=>200,
             'data'=>[
-                'application'=>$row
+                'application'=>$application,
+                'status_history'=>$history,
+                'notes'=>[] // ileride visibility ile açılabilir
             ]
         ];
     }
 
+    /**
+     * Başvurumu geri çek (withdraw)
+     * params: application_id:int
+     * Kural: sadece sahibi + withdraw yapılabilir statüler
+     */
     public static function withdraw(array $params): array
     {
         $auth   = Auth::requireAuth();
         $userId = (int)$auth['user_id'];
-        $appId  = isset($params['application_id']) ? (int)$params['application_id'] : 0;
+        $appId  = (int)($params['application_id'] ?? 0);
 
         if ($appId <= 0) {
             return ['success'=>false, 'message'=>'application_id is required', 'code'=>422];
@@ -1310,59 +1470,62 @@ class RecruitmentHandler
 
         $crud = new Crud($userId);
 
-        // Mevcut kayıt + sahiplik + mevcut status
-        $app = $crud->query("
-            SELECT id, user_id, status, company_id, job_id
-            FROM applications
-            WHERE id = :id AND user_id = :u
-            LIMIT 1
-        ", [':id'=>$appId, ':u'=>$userId]);
+        // Mevcut kayıt + sahiplik
+        $app = $crud->read('applications', [
+            ['id', '=', $appId],
+            ['user_id', '=', $userId],
+        ], ['id','user_id','company_id','job_post_id','status'], false);
 
-        if (!$app) {
+        if (!$app || !is_array($app)) {
             return ['success'=>false, 'message'=>'Application not found', 'code'=>404];
         }
 
-        $status = (string)$app['status'];
-        $allowed = ['pending', 'preApproved']; // gereksinime göre genişletilebilir
+        $current = (string)$app['status'];
+        $blocked = ['hired','rejected','withdrawn']; // terminal statüler
 
-        if (!in_array($status, $allowed, true)) {
-            return ['success'=>false, 'message'=>'Application cannot be withdrawn in current status', 'code'=>422];
+        if (in_array($current, $blocked, true)) {
+            return [
+                'success'=>false,
+                'message'=>"Application cannot be withdrawn from status: {$current}",
+                'code'=>409
+            ];
         }
 
-        // Güncelle
+        // 1) applications.status = 'withdrawn'
         $ok = $crud->update('applications', [
             'status'     => 'withdrawn',
             'updated_at' => date('Y-m-d H:i:s'),
         ], [
-            ['id','=',$appId],
-            ['user_id','=',$userId],
+            ['id', '=', $appId],
+            ['user_id', '=', $userId],
+            ['status', '=', $current],
         ]);
 
         if (!$ok) {
-            return ['success'=>false, 'message'=>'Failed to withdraw', 'code'=>500];
+            return ['success'=>false, 'message'=>'Application changed by another action, please refresh', 'code'=>409];
         }
 
-        // Audit
-        try {
-            $crud->create('audit_events', [
-                'actor_id'   => $userId,
-                'entity_type'=> 'application',
-                'entity_id'  => (int)$appId,
-                'action'     => 'withdraw',
-                'meta'       => json_encode([
-                    'from'=>$status,
-                    'to'=>'withdrawn',
-                    'company_id'=>(int)$app['company_id'],
-                    'job_id'=>(int)$app['job_id'],
-                ], JSON_UNESCAPED_UNICODE),
-                'ip'         => $_SERVER['REMOTE_ADDR'] ?? null,
-                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
-                'created_at' => date('Y-m-d H:i:s'),
-            ]);
-        } catch (\Throwable $e) {
-            Logger::error('audit_events insert failed in withdraw', ['e'=>$e->getMessage()]);
-            // audit başarısız ise akışı bozmayalım
-        }
+        // 2) history kaydı
+        $crud->create('application_status_history', [
+            'application_id' => (int)$appId,
+            'old_status'     => $current,
+            'new_status'     => 'withdrawn',
+            'changed_by'     => $userId,
+            'note'           => 'withdraw by candidate',
+            'created_at'     => date('Y-m-d H:i:s'),
+        ]);
+
+        // 3) audit
+        $crud->create('audit_events', [
+            'actor_id'   => $userId,
+            'entity_type'=> 'application',
+            'entity_id'  => (int)$appId,
+            'action'     => 'withdraw',
+            'meta'       => json_encode(['from'=>$current,'to'=>'withdrawn'], JSON_UNESCAPED_UNICODE),
+            'ip'         => $_SERVER['REMOTE_ADDR']   ?? null,
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null,
+            'created_at' => date('Y-m-d H:i:s'),
+        ]);
 
         return [
             'success'=>true,
@@ -1374,4 +1537,80 @@ class RecruitmentHandler
             ]
         ];
     }
+        /**
+     * cv_profile_percent
+     * Kullanıcının profil/CV tamamlama durumunu döner.
+     * Response:
+     *   { percent:int, required_min:int, missing_labels:[...], strategy:'v1' }
+     */
+    public static function cv_profile_percent(array $p): array
+    {
+        $auth = Auth::requireAuth();
+        $crud = new Crud((int)$auth['user_id']);
+        $uid  = (int)$auth['user_id'];
+
+        // users & user_cv
+        $u = $crud->read('users', ['id'=>$uid], [
+            'id','name','surname','email','user_image','bio','is_verified'
+        ], false) ?: [];
+
+        $cv = $crud->read('user_cv', ['user_id'=>$uid], [
+            'professional_title','country_id','city_id','address','zip_code',
+            'phone','social','language','education','work_experience','skills',
+            'certificates','seafarer_info','references'
+        ], false) ?: [];
+
+        // Gereksinim seti (v1)
+        $requirements = [
+            'basic_name'   => !!(($u['name'] ?? '') !== '' && ($u['surname'] ?? '') !== ''),
+            'contact_mail' => !!(($u['email'] ?? '') !== ''),
+            'avatar'       => !!(($u['user_image'] ?? '') !== ''),
+            'title'        => !!(($cv['professional_title'] ?? '') !== ''),
+            'location'     => !!(($cv['country_id'] ?? null) || ($cv['city_id'] ?? null)),
+            'phones'       => (is_array(self::json_try_decode($cv['phone'] ?? null)) && count(self::json_try_decode($cv['phone'] ?? null))>0),
+            'languages'    => (is_array(self::json_try_decode($cv['language'] ?? null)) && count(self::json_try_decode($cv['language'] ?? null))>0),
+            'education'    => (is_array(self::json_try_decode($cv['education'] ?? null)) && count(self::json_try_decode($cv['education'] ?? null))>0),
+            'experience'   => (is_array(self::json_try_decode($cv['work_experience'] ?? null)) && count(self::json_try_decode($cv['work_experience'] ?? null))>0),
+            'skills'       => (is_array(self::json_try_decode($cv['skills'] ?? null)) && count(self::json_try_decode($cv['skills'] ?? null))>0),
+            'certs'        => (is_array(self::json_try_decode($cv['certificates'] ?? null)) && count(self::json_try_decode($cv['certificates'] ?? null))>0),
+        ];
+
+        $labels = [
+            'basic_name'   => 'Full name',
+            'contact_mail' => 'Email',
+            'avatar'       => 'Profile photo',
+            'title'        => 'Professional title',
+            'location'     => 'Country/City',
+            'phones'       => 'Phone',
+            'languages'    => 'Languages',
+            'education'    => 'Education',
+            'experience'   => 'Experience',
+            'skills'       => 'Skills',
+            'certs'        => 'Certificates',
+        ];
+
+        $total = count($requirements);
+        $ok    = 0;
+        $missing = [];
+        foreach ($requirements as $k=>$v) {
+            if ($v) $ok++; else $missing[] = $labels[$k] ?? $k;
+        }
+
+        $percent = ($total > 0) ? (int)round(($ok * 100) / $total) : 0;
+
+        // minimum eşiği istersen parametre ile özelleştir
+        $min = (int)($p['min'] ?? 60);
+        if ($min < 0) $min = 0; if ($min > 100) $min = 100;
+
+        return [
+            'success'=>true, 'code'=>200, 'message'=>'OK',
+            'data'=>[
+                'percent'        => $percent,
+                'required_min'   => $min,
+                'missing_labels' => $missing,
+                'strategy'       => 'v1',
+            ]
+        ];
+    }
+
 }
