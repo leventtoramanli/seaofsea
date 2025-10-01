@@ -119,6 +119,34 @@ class PermissionService
     // --- efektif ---
     public static function effective(Crud $crud, int $userId, int $companyId=0): array
     {
+        // YENİ: Global rol kodları
+        self::initCrud($userId);
+        $globalRoleId    = self::getGlobalRoleId($userId);
+        $globalRoleCodes = $globalRoleId ? self::getRolePermissionCodesByRoleId($globalRoleId) : [];
+
+        // Company rol bazlı kodlar (mevcut)
+        $baseCompany = $companyId > 0 ? self::baseRoleCodes($crud, $userId, $companyId) : [];
+
+        // Base set: global rol kodları her zaman dahil; company >0 ise company rol kodları da dahil
+        $base = array_unique(array_merge($globalRoleCodes, $baseCompany));
+        $set  = array_fill_keys($base, true);
+
+        // Global overlay (user_permissions.company_id IS NULL)
+        $g = self::getUserGrantsAndRevokes($userId, null);
+        if (!empty($g['grants']))  { foreach ($g['grants'] as $code)  { $set[$code] = true; } }
+        if (!empty($g['revokes'])) { foreach ($g['revokes'] as $code) { unset($set[$code]); } }
+
+        // Company overlay (user_permissions.company_id = $companyId) — sadece >0 iken
+        if ($companyId > 0) {
+            $o = self::getUserGrantsAndRevokes($userId, $companyId);
+            if (!empty($o['grants']))  { foreach ($o['grants'] as $code)  { $set[$code] = true; } }
+            if (!empty($o['revokes'])) { foreach ($o['revokes'] as $code) { unset($set[$code]); } }
+        }
+
+        return array_keys($set);
+    }
+    /*public static function effective(Crud $crud, int $userId, int $companyId=0): array
+    {
         $base = $companyId > 0 ? self::baseRoleCodes($crud, $userId, $companyId) : []; // global’de role yoksa boş
         $set = array_fill_keys($base, true);
 
@@ -139,7 +167,7 @@ class PermissionService
         }
 
         return array_keys($set);
-    }
+    }*/
 
     private static function initCrud(int $userContextId): void
     {
@@ -289,25 +317,48 @@ class PermissionService
         return $list;
     }
     
-    public static function hasPermission(int $userId, string $code, ?int $companyId=null): bool
+    public static function hasPermission(int $userId, string $code, ?int $companyId = null): bool
     {
         $crud = new Crud($userId, false);
 
-        // kurucu/company-admin bypass (mevcut hızlı yol)
-        if ($companyId) {
-            $c = $crud->read('companies', ['id'=>$companyId], ['created_by'], false);
-            if ($c && (int)$c['created_by'] === $userId) return true;
+        // 1) Company bağlamı varsa: kurucu / company-admin hızlı yolu
+        if ($companyId !== null) {
+            $cid = (int)$companyId;
+
+            // Kurucu bypass
+            $c = $crud->read('companies', ['id' => $cid], ['created_by'], false);
+            if ($c && (int)$c['created_by'] === $userId) {
+                return true;
+            }
+
+            // Company-admin bypass
             $isAdmin = $crud->query("
-                SELECT 1 FROM company_users cu
-                JOIN roles r ON r.id=cu.role_id
-                WHERE cu.user_id=:u AND cu.company_id=:c
-                AND r.scope='company' AND r.name='admin' LIMIT 1
-            ", [':u'=>$userId, ':c'=>$companyId]);
-            if ($isAdmin) return true;
+                SELECT 1
+                FROM company_users cu
+                JOIN roles r ON r.id = cu.role_id
+                WHERE cu.user_id = :u
+                AND cu.company_id = :c
+                AND r.scope = 'company'
+                AND r.name  = 'admin'
+                LIMIT 1
+            ", [':u' => $userId, ':c' => $cid]);
+
+            if ($isAdmin) {
+                return true;
+            }
+
+            // Efektif set: global + company overlay
+            $eff = self::effective($crud, $userId, $cid);
+            return in_array($code, $eff, true);
         }
 
-        $eff = self::effective($crud, $userId, (int)($companyId ?? 0));
+        // 2) Global bağlam: yalnız global efektif set
+        $eff = self::effective($crud, $userId, 0);
         return in_array($code, $eff, true);
+    }
+    public static function hasGlobal(string $code, int $userId): bool
+    {
+        return self::hasPermission($userId, $code, null);
     }
 
     /**

@@ -65,4 +65,11 @@ return [
         'url' => $_ENV['APP_URL'] ?? 'http://localhost/seaofsea',
         'debug' => filter_var($_ENV['APP_DEBUG'] ?? false, FILTER_VALIDATE_BOOL),
     ],
+    'meta' => [
+        'application_status' => ['draft','submitted','under_review','shortlisted','interview','offered','hired','rejected','withdrawn'],
+        'job_post_status'    => ['draft','published','closed','archived'],
+        'job_post_visibility'=> ['public','followers','private'],
+        'company_visibility' => ['visible','hidden'],
+        'areas'              => ['crew','office','port','shipyard','supplier','agency'],
+    ],
 ];

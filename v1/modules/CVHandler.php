@@ -150,6 +150,16 @@ class CVHandler
         return self::ok($rows ?: []);
     }
 
+    public static function list_countries(array $params = []): array
+    {
+        $auth = Auth::requireAuth();
+        $crud = new Crud((int)$auth['user_id']);
+        $rows = $crud->read(
+            'cities', [], ['MIN(id) as id','country as name','iso2 as code2','iso3 as code'],
+            fetchAll: true, groupBy: ['country','iso3'], orderBy: ['country' => 'ASC']
+        );
+        return self::ok($rows ?: []);
+    }
     // Router action: list_cities_by_country
     public static function list_cities_by_country(array $params = []): array
     {
@@ -269,9 +279,15 @@ class CVHandler
 
     /* ===== Helpers ===== */
 
-    private static function ok($data = [], string $message = 'OK'): array
+    private static function ok($data = [], string $message = 'OK', array $ui = null, int $code = 200): array
     {
-        return ['success' => true, 'message' => $message, 'data' => $data];
+        if($ui){ $data = is_array($data) ? ($data + ['ui'=>$ui]) : ['ui'=>$ui]; }
+        return ['success' => true, 'message' => $message, 'code'=>$code, 'data' => $data];
+    }
+
+    private static function fail(string $message, int $code = 400, array $ui = null, $data = []): array {
+        if ($ui) { $data = is_array($data) ? ($data + ['ui'=>$ui]) : ['ui'=>$ui]; }
+        return ['success'=>false,'message'=>$message,'code'=>$code,'data'=>$data];
     }
 
     /** DB’de text/json saklanan alanlar için: string -> array */

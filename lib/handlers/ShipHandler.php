@@ -1,55 +1,47 @@
 <?php
-require_once __DIR__ . '/../handlers/CRUDHandlers.php';
+require_once __DIR__ . '/../core/Auth.php';
+require_once __DIR__ . '/../core/Response.php';
+require_once __DIR__ . '/../core/Crud.php';
 
-use Illuminate\Database\Capsule\Manager as Capsule;
+class ShipHandler
+{
+    /** GET: ship types list */
+    public static function get_ship_types(array $params = []): array
+    {
+        // Auth zorunlu
+        $auth = Auth::requireAuth();
+        $crud = new Crud((int)$auth['user_id']);
 
-class ShipHandler {
-    private $crud;
-    private static $logger;
-    private static $loggerInfo;
+        // Basit filtre / sayfalama (isteğe bağlı)
+        $q       = isset($params['q']) ? trim((string)$params['q']) : '';
+        $page    = max(1, (int)($params['page'] ?? 1));
+        $perPage = min(1000, max(1, (int)($params['per_page'] ?? 200)));
+        $offset  = ($page - 1) * $perPage;
 
-    public function __construct() {
-        $this->crud = new CRUDHandler();
-        if (!self::$logger) self::$logger = getLogger();
-        if (!self::$loggerInfo) self::$loggerInfo = getLoggerInfo();
-    }
+        // Basit where + bind
+        $where = [];
+        $bind  = [];
+        if ($q !== '') {
+            $where[]   = '(name LIKE :q OR description LIKE :q)';
+            $bind[':q'] = '%'.$q.'%';
+        }
+        $whereSql = $where ? ('WHERE '.implode(' AND ', $where)) : '';
 
-    private function buildResponse(bool $success, string $message, array $data = [], bool $showMessage = false, array $errors = []): array {
+        // Not: Crud::query projendeki generic raw query fonksiyonu; yoksa read ile de çözülebilir
+        $sql  = "SELECT id, name, description FROM ship_types $whereSql ORDER BY name ASC LIMIT :lim OFFSET :off";
+        $bind[':lim'] = $perPage;
+        $bind[':off'] = $offset;
+
+        $rows = $crud->query($sql, $bind) ?: [];
+
         return [
-            'success' => $success,
-            'message' => $message,
-            'data' => $data,
-            'errors' => $errors,
-            'showMessage' => $showMessage,
+            'success' => true,
+            'message' => 'OK',
+            'data'    => $rows,
+            'code'    => 200,
         ];
     }
 
-    /**
-     * Geminin tiplerini getirir.
-     */
-    public function getShipTypes(): array {
-        try {
-            $types = $this->crud->read(
-                'ship_types', // Tablonun adı
-                [],
-                ['id', 'name', 'description'], // Hangi kolonlar dönecek
-                true,
-                [],
-                [],
-                ['orderBy' => ['name' => 'ASC']],
-                true // Array formatında döndür
-            );
-
-            if (empty($types)) {
-                return $this->buildResponse(false, 'No ship types found.', []);
-            }
-
-            return $this->buildResponse(true, 'Ship types retrieved successfully.', $types);
-        } catch (Exception $e) {
-            self::$logger->error('Error fetching ship types.', ['exception' => $e]);
-            return $this->buildResponse(false, 'Error fetching ship types.', [], true, ['exception' => $e->getMessage()]);
-        }
-    }
-
-    // İleride buraya yeni fonksiyonlar eklenebilir (örneğin: createShipType, deleteShipType gibi)
+    /** Geri uyumluluk için camelCase alias */
+    public static function getShipTypes(array $params = []): array { return self::get_ship_types($params); }
 }

@@ -8,4 +8,5 @@
 *.log
 *.cache
 /test/
+/vendor/
 updateGit.bat
