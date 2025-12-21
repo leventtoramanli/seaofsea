@@ -1,0 +1,506 @@
+{
+  "module": "recruitment",
+  "version": 1,
+  "notes": {
+    "auto_close_on_max_hires": false,
+    "uses_cv_instead_of_per_application_upload": true,
+    "permission_integration_page_level": true,
+    "offer_declined_status_enabled": true,
+    "application_detail_auto_under_review": true
+  },
+  "status": {
+    "job_post": [
+      "draft",
+      "published",
+      "closed",
+      "archived"
+    ],
+    "application": [
+      "submitted",
+      "under_review",
+      "pending_documents",
+      "in_communication",
+      "offer_sent",
+      "hired",
+      "rejected",
+      "withdrawn",
+      "offer_declined"
+    ]
+  },
+  "events": [
+    "application_submitted",
+    "application_under_review",
+    "message_sent",
+    "internal_note_added",
+    "documents_requested",
+    "offer_created",
+    "offer_accepted",
+    "offer_declined",
+    "application_rejected",
+    "application_withdrawn"
+  ],
+  "php": {
+    "handlers": [
+      {
+        "class": "RecruitmentHandler",
+        "file": "v1/modules/RecruitmentHandler.php",
+        "type": "http_endpoint",
+        "status": "+"
+      },
+      {
+        "class": "RecruitmentDomainService",
+        "file": "v1/modules/RecruitmentDomainService.php",
+        "type": "domain_service",
+        "status": "+"
+      },
+      {
+        "class": "RecruitmentMessageService",
+        "file": "v1/modules/RecruitmentMessageService.php",
+        "type": "message_notification_service",
+        "status": "+"
+      }
+    ],
+    "endpoints": [
+      {
+        "action": "create_job_post",
+        "scope": "company",
+        "permission_code": "recruitment.job.create",
+        "description": "Yeni iş ilanı taslağı oluşturur.",
+        "request": {
+          "title": "string",
+          "description": "string",
+          "location": "string",
+          "employment_type": "string",
+          "requirements": "string",
+          "salary_range": "string|null",
+          "max_hires": "int|null"
+        },
+        "response_data": {
+          "job_post_id": "int"
+        }
+      },
+      {
+        "action": "update_job_post",
+        "scope": "company",
+        "permission_code": "recruitment.job.update",
+        "description": "Draft/published job post bilgilerini günceller.",
+        "request": {
+          "job_post_id": "int",
+          "fields": "mixed (title/description/... partial update)"
+        },
+        "response_data": {
+          "job_post_id": "int"
+        }
+      },
+      {
+        "action": "publish_job_post",
+        "scope": "company",
+        "permission_code": "recruitment.job.publish",
+        "description": "Draft job post'u published durumuna alır.",
+        "request": {
+          "job_post_id": "int"
+        },
+        "response_data": {
+          "job_post_id": "int",
+          "status": "published"
+        }
+      },
+      {
+        "action": "close_job_post",
+        "scope": "company",
+        "permission_code": "recruitment.job.close",
+        "description": "Job post'u yeni başvuruya kapatır (closed).",
+        "request": {
+          "job_post_id": "int"
+        },
+        "response_data": {
+          "job_post_id": "int",
+          "status": "closed"
+        }
+      },
+      {
+        "action": "archive_job_post",
+        "scope": "company",
+        "permission_code": "recruitment.job.archive",
+        "description": "Job post'u archived durumuna alır.",
+        "request": {
+          "job_post_id": "int"
+        },
+        "response_data": {
+          "job_post_id": "int",
+          "status": "archived"
+        }
+      },
+      {
+        "action": "delete_job_post",
+        "scope": "company",
+        "permission_code": "recruitment.job.delete",
+        "description": "Hiç başvuru yoksa ilgili iş ilanını hard delete eder.",
+        "request": {
+          "job_post_id": "int"
+        },
+        "response_data": {
+          "deleted": "bool"
+        }
+      },
+      {
+        "action": "list_company_job_posts",
+        "scope": "company",
+        "permission_code": "recruitment.job.list",
+        "description": "Şirketin tüm job postlarını sayfalı olarak listeler.",
+        "request": {
+          "company_id": "int",
+          "status": "string|null",
+          "page": "int",
+          "per_page": "int"
+        },
+        "response_data": {
+          "items": "JobPost[]",
+          "pagination": {
+            "page": "int",
+            "per_page": "int",
+            "total": "int"
+          }
+        }
+      },
+      {
+        "action": "get_job_post_detail",
+        "scope": "company",
+        "permission_code": "recruitment.job.view",
+        "description": "Şirket tarafında job post detayını ve istatistikleri getirir.",
+        "request": {
+          "job_post_id": "int"
+        },
+        "response_data": {
+          "job_post": "JobPost",
+          "stats": {
+            "applications_total": "int",
+            "applications_by_status": "object"
+          }
+        }
+      },
+      {
+        "action": "list_job_applications",
+        "scope": "company",
+        "permission_code": "recruitment.app.list",
+        "description": "Belirli bir job post için başvuruları listeler.",
+        "request": {
+          "job_post_id": "int",
+          "status": "string|null",
+          "page": "int",
+          "per_page": "int"
+        },
+        "response_data": {
+          "items": "ApplicationSummary[]",
+          "pagination": {
+            "page": "int",
+            "per_page": "int",
+            "total": "int"
+          }
+        }
+      },
+      {
+        "action": "get_application_detail",
+        "scope": "company",
+        "permission_code": "recruitment.app.view",
+        "description": "Başvuru detayını getirir. Varsayılan olarak status 'under_review' yapılır ve event tetiklenir.",
+        "request": {
+          "application_id": "int",
+          "auto_mark_under_review": "bool|null"
+        },
+        "response_data": {
+          "application": "ApplicationDetail",
+          "messages": "Message[]",
+          "internal_notes": "Note[]",
+          "status_history": "StatusHistory[]"
+        }
+      },
+      {
+        "action": "send_message_to_applicant",
+        "scope": "company",
+        "permission_code": "recruitment.app.message",
+        "description": "Şirketten adaya mesaj gönderir, status'u 'in_communication' veya 'pending_documents' dışındaysa 'in_communication' yapabilir.",
+        "request": {
+          "application_id": "int",
+          "message_type": "string (text|doc_request)",
+          "content": "string"
+        },
+        "response_data": {
+          "message_id": "int",
+          "new_status": "string"
+        }
+      },
+      {
+        "action": "add_internal_note",
+        "scope": "company",
+        "permission_code": "recruitment.app.internal_note",
+        "description": "Adayın görmediği iç not ekler.",
+        "request": {
+          "application_id": "int",
+          "content": "string"
+        },
+        "response_data": {
+          "note_id": "int"
+        }
+      },
+      {
+        "action": "request_documents",
+        "scope": "company",
+        "permission_code": "recruitment.app.request_documents",
+        "description": "Adaydan ek evrak ister. Mesaj tipi doc_request olarak kaydedilir; status 'pending_documents' olur.",
+        "request": {
+          "application_id": "int",
+          "requested_items": "string"
+        },
+        "response_data": {
+          "message_id": "int",
+          "new_status": "pending_documents"
+        }
+      },
+      {
+        "action": "set_application_status",
+        "scope": "company",
+        "permission_code": "recruitment.app.set_status",
+        "description": "Başvuru durumunu değiştirir (rejected, offer_sent, hired, offer_declined vb.). Geçişler RecruitmentDomainService tarafından doğrulanır.",
+        "request": {
+          "application_id": "int",
+          "status": "string",
+          "reason": "string|null"
+        },
+        "response_data": {
+          "application_id": "int",
+          "status": "string"
+        }
+      },
+      {
+        "action": "create_offer",
+        "scope": "company",
+        "permission_code": "recruitment.app.create_offer",
+        "description": "Aday için iş teklifi oluşturur ve status 'offer_sent' yapılır.",
+        "request": {
+          "application_id": "int",
+          "position_mode": "string (same_as_post|custom)",
+          "position_code": "string|null",
+          "note": "string|null"
+        },
+        "response_data": {
+          "offer_id": "int",
+          "new_status": "offer_sent"
+        }
+      },
+      {
+        "action": "accept_candidate_as_employee",
+        "scope": "company",
+        "permission_code": "recruitment.app.convert_to_employee",
+        "description": "Aday teklif sonrası kabul ettikten sonra company_users tablosuna ekler, status 'hired' kalır.",
+        "request": {
+          "application_id": "int"
+        },
+        "response_data": {
+          "company_user_id": "int",
+          "application_status": "hired"
+        }
+      },
+      {
+        "action": "list_matching_job_posts",
+        "scope": "candidate",
+        "permission_code": "recruitment.job.list_matching",
+        "description": "Kullanıcının ehliyet/puan/profiline uyan ilanları listeler.",
+        "request": {
+          "page": "int",
+          "per_page": "int"
+        },
+        "response_data": {
+          "items": "JobPostPublic[]",
+          "pagination": {
+            "page": "int",
+            "per_page": "int",
+            "total": "int"
+          }
+        }
+      },
+      {
+        "action": "list_public_job_posts",
+        "scope": "candidate",
+        "permission_code": "recruitment.job.list_public",
+        "description": "Kullanıcının isterse tüm yayınlanmış ilanları görmesini sağlar.",
+        "request": {
+          "page": "int",
+          "per_page": "int"
+        },
+        "response_data": {
+          "items": "JobPostPublic[]",
+          "pagination": {
+            "page": "int",
+            "per_page": "int",
+            "total": "int"
+          }
+        }
+      },
+      {
+        "action": "get_public_job_post",
+        "scope": "candidate",
+        "permission_code": "recruitment.job.view_public",
+        "description": "Adayın gördüğü sade job post detayını getirir.",
+        "request": {
+          "job_post_id": "int"
+        },
+        "response_data": {
+          "job_post": "JobPostPublic"
+        }
+      },
+      {
+        "action": "submit_application",
+        "scope": "candidate",
+        "permission_code": "recruitment.app.submit",
+        "description": "Kullanıcı ilgili ilana başvuru yapar. CV sistemde kayıtlıdır, burada tekrar belge eklenmez.",
+        "request": {
+          "job_post_id": "int",
+          "cover_message": "string"
+        },
+        "response_data": {
+          "application_id": "int",
+          "status": "submitted"
+        }
+      },
+      {
+        "action": "withdraw_application",
+        "scope": "candidate",
+        "permission_code": "recruitment.app.withdraw",
+        "description": "Kullanıcı kendi başvurusunu geri çeker.",
+        "request": {
+          "application_id": "int"
+        },
+        "response_data": {
+          "application_id": "int",
+          "status": "withdrawn"
+        }
+      },
+      {
+        "action": "list_my_applications",
+        "scope": "candidate",
+        "permission_code": "recruitment.app.list_my",
+        "description": "Kullanıcının tüm başvurularını listeler.",
+        "request": {
+          "page": "int",
+          "per_page": "int"
+        },
+        "response_data": {
+          "items": "ApplicationSummary[]",
+          "pagination": {
+            "page": "int",
+            "per_page": "int",
+            "total": "int"
+          }
+        }
+      },
+      {
+        "action": "get_my_application_detail",
+        "scope": "candidate",
+        "permission_code": "recruitment.app.view_my",
+        "description": "Kullanıcının kendi başvurusuna ait detayları getirir.",
+        "request": {
+          "application_id": "int"
+        },
+        "response_data": {
+          "application": "ApplicationDetailPublic",
+          "messages": "Message[]",
+          "status_history": "StatusHistory[]"
+        }
+      },
+      {
+        "action": "reply_message",
+        "scope": "candidate",
+        "permission_code": "recruitment.app.reply_message",
+        "description": "Kullanıcı şirketin gönderdiği mesaja cevap yazar.",
+        "request": {
+          "application_id": "int",
+          "content": "string"
+        },
+        "response_data": {
+          "message_id": "int"
+        }
+      },
+      {
+        "action": "accept_offer",
+        "scope": "candidate",
+        "permission_code": "recruitment.app.accept_offer",
+        "description": "Kullanıcı şirketten gelen job offer'ı kabul eder.",
+        "request": {
+          "application_id": "int"
+        },
+        "response_data": {
+          "application_id": "int",
+          "status": "hired"
+        }
+      },
+      {
+        "action": "decline_offer",
+        "scope": "candidate",
+        "permission_code": "recruitment.app.decline_offer",
+        "description": "Kullanıcı şirketten gelen job offer'ı reddeder.",
+        "request": {
+          "application_id": "int"
+        },
+        "response_data": {
+          "application_id": "int",
+          "status": "offer_declined"
+        }
+      }
+    ]
+  },
+  "flutter": {
+    "service_file": "lib/services/v1/recruitment_service_v1.dart",
+    "provider_file": "lib/providers/recruitment_provider.dart",
+    "ui_paths": {
+      "company": [
+        "lib/views/recruitment/company/company_job_list_page.dart",
+        "lib/views/recruitment/company/company_job_edit_page.dart",
+        "lib/views/recruitment/company/company_applications_page.dart",
+        "lib/views/recruitment/company/company_application_detail_page.dart"
+      ],
+      "candidate": [
+        "lib/views/recruitment/candidate/jobs_explore_page.dart",
+        "lib/views/recruitment/candidate/job_detail_page.dart",
+        "lib/views/recruitment/candidate/job_apply_page.dart",
+        "lib/views/recruitment/candidate/my_applications_page.dart",
+        "lib/views/recruitment/candidate/my_application_detail_page.dart"
+      ]
+    },
+    "methods": [
+      "listMatchingJobs",
+      "listPublicJobs",
+      "getJobDetail",
+      "submitApplication",
+      "withdrawApplication",
+      "listMyApplications",
+      "getMyApplicationDetail",
+      "listCompanyJobPosts",
+      "getCompanyJobPostDetail",
+      "listJobApplications",
+      "getApplicationDetail",
+      "sendMessageToApplicant",
+      "addInternalNote",
+      "requestDocuments",
+      "setApplicationStatus",
+      "createOffer",
+      "acceptOffer",
+      "declineOffer",
+      "acceptCandidateAsEmployee"
+    ]
+  },
+  "notifications": {
+    "context_types": [
+      "application",
+      "job_post"
+    ],
+    "routing": {
+      "application": {
+        "flutter_route": "/my-applications",
+        "arg_key": "initial_application_id",
+        "open_detail_automatically": true
+      }
+    }
+  },
+  "status_mapping_note": "Plan statuleri ile DB statuleri (draft, submitted, under_review, shortlisted, interview, offered, hired, rejected, withdrawn) arasında mapping kullanılacak; migration sonraya bırakıldı."
+}

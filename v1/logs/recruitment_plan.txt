@@ -1,0 +1,501 @@
+senin mesajına devam ediyoruz.
++ olanları tamamladık.
+* ile başlayan cümleler benim notlarım.
+
+PART 1 – Senaryoyu Netleştirelim (Kısa Özet + Küçük Tavsiyeler)
+1) Company tarafı – Netleştirilmiş akış
+
+Job post hayatı:
+
+draft → published → closed / archived
+
+0 başvuru ise → hard delete serbest.
+
+Applications:
+
+Kullanıcı başvurunca → submitted
+
+Şirket başvuru detayını açtığı an:
+
+Status → under_review
+
+Adaya bildirim → “Başvurun inceleniyor.”
+
+Mesajlar:
+
+İki kanal olmalı:
+
+Mesaj (aday görüyor)
+
+İç not (aday görmüyor)
+
+“Evrak iste” de aslında bir mesaj tipi (doc_request).
+
+Mesaj / doc_request geldiğinde:
+
+Status → örn. in_communication veya pending_documents
+
+Adaya bildirim.
+
+Karar:
+
+Şirket için iki ana karar:
+
+Reject → rejected
+
+Offer → offer_sent (veya accepted_by_company)
+
+Offer verirken:
+
+Pozisyon:
+
+“Same as post”
+
+“Not as post” → görev seçimi açılır.
+
+Onayladığında:
+
+Aday tarafında: “Bu şirket seni şu görevle işe almak istiyor, kabul ediyor musun?”
+
+Aday kabul ederse:
+
+applications.status = hired
+
+company_users (veya eşdeğer tablo) içine kullanıcı eklenir.
+
+Aday reddeder ise:
+
+offer_declined (ya da rejected_by_candidate).
+
+Eğitim / sınav kısmı:
+
+Bence bu MVP sonrası ayrı bir modül:
+
+application_assessments / trainings tablosu.
+
+“İşe alım öncesi sınav”, “işe alım sonrası eğitim” gibi flag’ler.
+
+Şirket panelinde:
+
+Adayları sınav skoruna göre listeleme vs.
+
+Aynı ilana birden fazla çalışan alma:
+
+job_posts.max_hires alanı zaten bunu karşılar (yoksa ekleriz).
+
+Hired sayısı max_hires’a ulaşınca ilan otomatik closed olabilir. * Buna gerek yok. Kapatmak isterse şirket kapar.
+
+2) Kullanıcı tarafı – Netleştirilmiş akış
+
+Job listesi:
+
+Default: kriterine uyan ilanları görür (ehliyet, sertifika vs).
+
+“Tüm ilanları göster” toggle’ı ile her şeyi görebilir.
+
+Başvuru:
+
+“Apply” → Cover message zorunlu (MVP için).
+
+İsterse belgelerini de ekleyebilir. *bunu her başvuru sahibi için yaparsak önünü alamayız. bunun yerine CV var.
+
+Bildirimler:
+
+“Başvurun inceleniyor”
+
+“Şirket mesaj gönderdi”
+
+“Evrak talebi”
+
+“Teklif verildi”
+
+“Başvuru reddedildi”
+
+My Applications sayfası:
+
+Tüm başvurular listelenir.
+
+Her birine tıklayınca:
+
+Status timeline
+
+Mesajlaşma
+
+Evrak listesi
+
+İşe alındı kısmı:
+
+Şirket “offer_sent” yapar.
+
+Aday bu sayfadan:
+
+Kabul et → şirket personeli olur.
+
+Reddet → offer_declined.
+
+3) Tavsiye – Eklemek isteyebileceğim birkaç nokta
+
+Status timeline
+
+Aday tarafında bir timeline (Submitted → Under review → Offer → Hired).
+
+Şirket tarafında da aynı timeline’ı görsün.
+
+Sebep bilgisi (opsiyonel)
+
+Rejected için reason alanı (opsiyonel).
+İleride “standart ret şablonları” bile eklenebilir.
+
+Rate limit / spam koruma
+
+Aynı ilana defalarca başvurma, mesaj spam’i gibi şeyleri engellemek için basit bir limit.
+
+Permission entegrasyonu *yetkilendirme sayfalarımız var bu sayfa içinde bir yetkilendirme koşulu koyarız ve bu sayfayı görenlerin yetki vereceği kullanıcılarda bu sayfayı görebilir şirket tarafı için.
+
+Şirket içinde: sadece hr / recruiter / company_admin bu ekranları görebilsin.
+
+Notification integration
+
+Zaten bir NotificationsHandler yapın var; recruitment event’leri oraya bağlanırsa sistem genel notification mantığı ile uyumlu olur.
+
+PART 2 – Status & Event Model (Backend mantığı için)
+
+Bence aşağıdaki status seti seni kurtarır:
+
+Job Posts
+
+draft
+
+published
+
+closed (yeni başvuru alamaz, ama kayıtlar durur)
+
+archived (tamamen pasif, arama sonuçlarında çıkmayabilir)
+
+Applications
+
+submitted
+
+under_review
+
+pending_documents (veya in_communication)
+
+offer_sent
+
+hired
+
+rejected
+
+withdrawn
+
+(Opsiyonel) offer_declined *Bu olsun
+
+Her action bir event üretsin:
+
+application_submitted
+
+application_under_review
+
+message_sent
+
+documents_requested
+
+offer_created
+
+offer_accepted
+
+offer_declined
+
+application_rejected
+
+application_withdrawn
+
+Ve her event:
+
+applications.status’ı güncellesin (gerekirse),
+
+application_status_history tablosuna kayıt atsın,
+
+notifications tablosuna da kaydı düşsün.
+
+Bu kısmı PHP tarafında RecruitmentDomainService gibi tek bir sınıfa toplamak çok işleri temizler.
+
+PART 3 – Backend Dosya Yapısı Önerisi (v1 PHP)
+
+v1 yapını biliyorum: index.php → router.php → XxxHandler::action.
+
+Buraya göre:
+
+3.1. Modül dosyaları
+v1/
+  modules/
+    RecruitmentHandler.php
+    RecruitmentDomainService.php
+    RecruitmentMessageService.php   (istersen) *Bu harika olur.
+
+
+RecruitmentHandler.php
+→ Sadece endpoint’leri içerir. Örnek action isimleri:
+
+Job Post Actions
+
++create_job_post
+
++update_job_post
+
++publish_job_post
+
++close_job_post
+
++archive_job_post
+
++delete_job_post (sadece 0 application varsa)
+
+Company Application Actions
+
++list_job_applications (job_id + filtre)
+
++get_application_detail
+
+mark_under_review (veya get_application_detail içinde otomatik)
+
+send_message_to_applicant
+
+add_internal_note
+
+request_documents
+
+set_application_status (reject, offer_sent, hired vs.)
+
+create_offer (eğer status set’ten ayrı tutmak istersen)
+
+Candidate Actions
+
+list_matching_job_posts
+
+list_public_job_posts
+
+get_public_job_post
+
+submit_application
+
+withdraw_application
+
+list_my_applications
+
+get_my_application_detail
+
+reply_message
+
+upload_requested_document
+
+accept_offer
+
+decline_offer
+
+Hepsinin içinde pattern:
+
+public static function submit_application(array $params): array {
+    $auth = Auth::requireAuth();
+    Gate::check('recruitment.apply_job', null);
+
+    $jobId = (int)($params['job_id'] ?? 0);
+    $cover = trim((string)($params['cover_message'] ?? ''));
+
+    // param validate → 422
+    // iş kuralları → RecruitmentDomainService::submitApplication(...)
+    // return standard zarf
+}
+
+
+RecruitmentDomainService.php
+→ Tüm ağır iş burada:
+
+submitApplication(...)
+
+changeApplicationStatus(...)
+
+createOffer(...)
+
+acceptOffer(...)
+
+declineOffer(...)
+
+addMessage(...)
+
+addInternalNote(...)
+
+requestDocuments(...)
+
+Bu sınıf:
+
+Crud sınıfını kullanır,
+
+status geçişlerini kontrol eder,
+
+application_status_history ve audit_events’e yazı yazar,
+
+NotificationsHandler (veya NotificationService) çağırır.
+
+RecruitmentMessageService.php (istersen)
+
+sendUserNotification(...)
+
+sendInAppMessage(...)
+
+Email / push / in-app notification entegrasyonlarını burada toplarsın.
+
+3.2. Router tarafı
+
+router.php içinde:
+
+module = 'recruitment'
+
+action = 'submit_application' gibi mapping’ler zaten otomatik (autoloader + sınıf adı).
+
+Sadece RecruitmentHandler dosyası doğru yerde ve sınıf adı uyumlu olsun.
+
+PART 4 – Frontend Dosya Yapısı Önerisi (Flutter / v1)
+
+lib/ altında v1 yapın var. Ona uyarlayalım:
+
+lib/
+  services/v1/
+    recruitment_service_v1.dart
+
+  providers/
+    recruitment_provider.dart
+
+  views/
+    recruitment/
+      company/
+        company_job_list_page.dart
+        company_job_edit_page.dart
+        company_applications_page.dart
+        company_application_detail_page.dart
+
+      candidate/
+        jobs_explore_page.dart
+        job_detail_page.dart
+        job_apply_page.dart   (veya bottomSheet/dialog)
+        my_applications_page.dart
+        my_application_detail_page.dart
+
+  widgets/recruitment/
+    job_card.dart
+    application_card.dart
+    application_status_chip.dart
+    message_thread.dart
+    application_timeline.dart
+
+4.1. recruitment_service_v1.dart
+
+Bu servis doğrudan backend action isimlerine map olsun:
+
+Future<List<JobPost>> listMatchingJobs(...)
+
+Future<List<JobPost>> listPublicJobs(...)
+
+Future<JobPost> getJobDetail(int jobId)
+
+Future<void> submitApplication(...)
+
+Future<List<Application>> listMyApplications(...)
+
+Future<ApplicationDetail> getMyApplicationDetail(...)
+
+Future<void> withdrawApplication(...)
+
+Future<List<Application>> listJobApplications(int jobId, ...)
+
+Future<ApplicationDetail> getApplicationDetail(int appId)
+
+Future<void> setApplicationStatus(...)
+
+Future<void> sendMessage(...)
+
+Future<void> addInternalNote(...)
+
+Future<void> acceptOffer(...)
+
+Future<void> declineOffer(...)
+
+Hepsi V1ApiManager.call(module:'recruitment', action: 'submit_application', params: {...}) şeklinde gider.
+
+4.2. Provider
+
+recruitment_provider.dart:
+
+Şirket tarafı:
+
+companyJobList
+
+companyApplicationsByJob
+
+selectedApplication
+
+Aday tarafı:
+
+matchingJobs
+
+myApplications
+
+Basitçe cache + loading state yönetir. İş mantığı yine backend’de.
+
+4.3. UI sayfaları
+
+CompanyJobListPage
+
+İlan listesi
+
+“Edit / Publish / Close / Archive / Delete” butonları
+
+CompanyApplicationsPage
+
+Seçilen job için başvuru listesi
+
+Filtre: status / tarih / skor vs.
+
+CompanyApplicationDetailPage
+
+Aday bilgileri
+
+Status timeline
+
+Mesajlaşma paneli
+
+İç notlar bölümü
+
+“Evrak iste” butonu
+
+“Offer” / “Reject” butonları
+
+JobsExplorePage
+
+Kullanıcıya uygun iş ilanları listesi
+
+“Tüm ilanları göster” switch
+
+JobDetailPage
+
+İlan detayları
+
+“Apply” butonu
+
+JobApplyPage / dialog
+
+Cover message textfield
+
+(İleride) belge ekleme
+
+MyApplicationsPage
+
+Kullanıcının tüm başvuruları
+
+Status chip + son mesaj zamanı
+
+MyApplicationDetailPage
+
+Aynı timeline + mesajlaşma + evraklar
+
+Offer varsa “Kabul / Reddet” butonları

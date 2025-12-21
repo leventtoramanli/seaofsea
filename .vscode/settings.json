@@ -1,7 +1,7 @@
 {
     "editor.defaultFormatter": "vscode.php-language-features",
     "[php]": {
-        "editor.defaultFormatter": "valeryanm.vscode-phpsab"
+        "editor.defaultFormatter": "DEVSENSE.phptools-vscode"
     },
     "python.analysis.typeCheckingMode": "standard",
     "phpcs.standard": ""

@@ -50,7 +50,7 @@ return [
     ],
     'jwt' => [
         'secret'     => $_ENV['JWT_SECRET'] ?? 'default_secret_key',
-        'expiration' => (int)($_ENV['JWT_EXPIRATION'] ?? 3600), // saniye cinsinden
+        'expiration' => (int)($_ENV['JWT_EXPIRATION'] ?? 86400), // saniye cinsinden
     ],
     'mail' => [
         'host'         => $_ENV['MAIL_HOST'] ?? 'smtp.example.com',

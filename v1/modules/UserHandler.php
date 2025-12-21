@@ -45,6 +45,38 @@ class UserHandler
         return ['success' => true, 'data' => $rows];
     }
 
+    public static function get_public_profile(array $params): array
+    {
+        $auth     = Auth::requireAuth();
+        $viewerId = (int)$auth['user_id'];
+        $targetId = (int)($params['user_id'] ?? 0);
+        if ($targetId <= 0) {
+            return ['success' => false, 'message' => 'user_id is required', 'data' => []];
+        }
+
+        $crud = new Crud($viewerId);
+        // Public göstermek istediğimiz alanlar:
+        $cols = ['id','name','surname','user_image','dob','pob','gender','maritalStatus'];
+        $u = $crud->read('users', ['id' => $targetId], $cols, false);
+        if (!$u) {
+            return ['success' => false, 'message' => 'User not found', 'data' => []];
+        }
+
+        // İsteğe bağlı tek satırlık full_name
+        $u['full_name'] = trim(($u['name'] ?? '').' '.($u['surname'] ?? ''));
+
+        // İleride privacy kuralı eklemek istersen:
+        // if ($viewerId !== $targetId) { ... alan maskeleme ... }
+
+        return ['success' => true, 'data' => $u];
+    }
+
+    // Alias (opsiyonel): user.getPublicProfile
+    public static function getPublicProfile(array $params): array
+    {
+        return self::get_public_profile($params);
+    }
+
     public static function listCitiesByCountry(array $params): array
     {
         $country = $params['country'] ?? '';

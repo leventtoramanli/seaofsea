@@ -381,21 +381,34 @@ class Crud
             $op = strtoupper((string)($val[0] ?? ''));
             switch ($op) {
                 case 'IN':
-                case 'NOT IN':
+                case 'NOT IN': {
+                    // Giriş şekli -> [$col, ['IN', $list]]
                     $list = (array)($val[1] ?? []);
+                    // Null/duplikasyon temizliği + basit tip normalize
+                    $list = array_values(array_unique(array_filter($list, static fn($v) => $v !== null)));
+
                     if (empty($list)) {
+                        // Boş liste olayı -> IN -> her zaman false; NOT IN -> her zaman true
                         $whereParts[] = ($op === 'IN') ? '1=0' : '1=1';
                         break;
                     }
+
                     $phs = [];
                     foreach ($list as $item) {
-                        $phName = "{$col}_{$idx}";
+                        // Parametre adlarının çakışmaması için ++
+                        $phName = "{$col}_" . ($idx++);
                         $phs[] = ":{$phName}";
-                        $params[$phName] = $item;
-                        $idx++;
+                        // Sayısal olanları integer yada float yap, diğerlerini string olarak bırak
+                        if (is_numeric($item)) {
+                            $params[$phName] = (strpos((string)$item, '.') !== false) ? (float)$item : (int)$item;
+                        } else {
+                            $params[$phName] = (string)$item;
+                        }
                     }
+
                     $whereParts[] = "`{$col}` {$op} (" . implode(',', $phs) . ")";
                     break;
+                }
 
                 case 'LIKE':
                     $ph = ":{$col}_like_{$idx}";
