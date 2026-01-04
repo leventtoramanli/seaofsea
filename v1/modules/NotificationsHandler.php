@@ -44,6 +44,34 @@ class NotificationsHandler
         return $per;
     }
 
+    private static function normalizeMeta(?array $meta, array $row): ?array
+    {
+        if (!$meta)
+            return null;
+
+        // Zaten yeni formatsa dokunma
+        if (!empty($meta['target']) && !empty($meta['route_args'])) {
+            return $meta;
+        }
+
+        // Eski format: ['application_id' => X, 'message_id' => Y]
+        if (!empty($meta['application_id'])) {
+            return [
+                'target' => 'candidate_application_detail',
+                'route_args' => [
+                    'application_id' => (int) $meta['application_id'],
+                ],
+                'extra' => [
+                    'message_id' => isset($meta['message_id']) ? (int) $meta['message_id'] : null,
+                    'legacy' => true,
+                ],
+            ];
+        }
+
+        return $meta;
+    }
+
+
     /*
      * Listeleme – kullanıcının kendi bildirimleri
      */
@@ -98,7 +126,7 @@ class NotificationsHandler
                             $meta = $decoded;
                         }
                     }
-                    $it['meta'] = $meta;
+                    $it['meta'] = self::normalizeMeta($meta, $it);
                 }
                 unset($it);
             }

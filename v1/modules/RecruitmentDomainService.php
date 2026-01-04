@@ -136,21 +136,35 @@ class RecruitmentDomainService
             return $app;
         }
 
-        $ok = $crud->update(
+        // Atomik update: aynı anda iki kişi açarsa ikinci update 0 satır etkiler → history/notification çakışmaz
+        $affected = $crud->update(
             self::T_APPS,
             [
                 'status' => $newStatus,
                 'updated_at' => self::now(),
             ],
-            ['id' => $applicationId]
+            [
+                'id' => $applicationId,
+                'status' => $oldStatus, // kritik satır
+            ]
         );
 
-        if ($ok) {
+        // Crud->update bazı implementasyonlarda bool, bazılarında etkilenen satır sayısı döndür.
+        // Burada güvenli şekilde "değişti mi?" kontrol et.
+        $changed = ($affected !== false && $affected !== 0);
+
+        if ($changed) {
             self::addStatusHistory($crud, $applicationId, $oldStatus, $newStatus, $actorUserId, $reason);
             $updated = self::getOne($crud, self::T_APPS, ['id' => $applicationId]);
             if ($updated) {
                 return $updated;
             }
+        }
+
+        // Değişmediyse (muhtemelen başka biri güncelledi) güncel halini çekip dön
+        $current = self::getOne($crud, self::T_APPS, ['id' => $applicationId]);
+        if ($current) {
+            return $current;
         }
 
         Logger::error('Application status update failed', [
@@ -446,6 +460,8 @@ class RecruitmentDomainService
 
         return [
             'company_id' => $companyId,
+            'by_status' => $byStatus,
+            'total' => $total,
             'applications_total' => $total,
             'applications_by_status' => $byStatus,
         ];
@@ -480,36 +496,117 @@ class RecruitmentDomainService
             ['created_at' => 'DESC']
         );
     }
-
     public static function list_company_applications(
         int $companyId,
         int $actorUserId,
         int $page,
         int $perPage,
-        ?string $status = null
+        ?string $status = null,
+        ?int $jobPostId = null,
+        ?string $q = null
     ): array {
-        Gate::check('recruitment.company.view', $companyId); // 403 yoksa
+        Gate::check('recruitment.company.view', $companyId);
 
         $crud = new Crud($actorUserId, true);
 
-        $where = [
-            ['company_id', '=', $companyId],
+        // --- base where + params ---
+        $params = [
+            'company_id' => $companyId,
         ];
+        $whereSql = 'a.company_id = :company_id';
+
         if ($status !== null && $status !== '') {
-            $where[] = ['status', '=', $status];
+            $s = trim($status);
+
+            // UI "active" = terminal olmayanlar
+            if ($s === 'active') {
+                $whereSql .= " AND a.status IN (
+                'submitted',
+                'under_review',
+                'in_communication',
+                'pending_documents',
+                'offer_sent'
+            )";
+            }
+            // UI "terminal" = kapanmış/sonlanmış
+            elseif ($s === 'terminal') {
+                $whereSql .= " AND a.status IN (
+                'hired',
+                'rejected',
+                'withdrawn',
+                'offer_declined'
+            )";
+            }
+            // Canonical status (tekil)
+            else {
+                $whereSql .= ' AND a.status = :status';
+                $params['status'] = $s;
+            }
         }
 
-        $total = (int) $crud->count('applications', $where);
+        if ($jobPostId !== null && $jobPostId > 0) {
+            $whereSql .= ' AND a.job_post_id = :job_post_id';
+            $params['job_post_id'] = $jobPostId;
+        }
 
-        $items = $crud->read(
-            'applications',
-            $where,
-            ['id', 'user_id', 'company_id', 'job_post_id', 'status', 'cover_letter', 'created_at', 'updated_at'],
-            true,
-            ['id' => 'DESC'],
-            [],
-            ['limit' => $perPage, 'offset' => ($page - 1) * $perPage]
-        );
+        if ($q !== null && $q !== '') {
+            $whereSql .= ' AND (
+            u.name LIKE :q OR u.surname LIKE :q OR u.email LIKE :q OR
+            jp.title LIKE :q
+        )';
+            $params['q'] = '%' . $q . '%';
+        }
+
+        // Pagination güvenliği (int)
+        $page = max(1, (int) $page);
+        $perPage = max(1, min(200, (int) $perPage)); // istersen üst limiti değiştir
+        $offset = max(0, ($page - 1) * $perPage);
+
+        // --- COUNT: sadece gerçek paramlar (limit/offset YOK) ---
+        $countSql = "
+        SELECT COUNT(*) AS c
+        FROM applications a
+        INNER JOIN users u ON u.id = a.user_id
+        LEFT JOIN job_posts jp ON jp.id = a.job_post_id
+        WHERE {$whereSql}
+    ";
+
+        $countRows = $crud->query($countSql, $params);
+        if ($countRows === false) {
+            throw new \RuntimeException('Company applications could not be counted');
+        }
+        $total = (int) ($countRows[0]['c'] ?? 0);
+
+        // --- ITEMS: LIMIT/OFFSET bind ETME (SQL'e göm) ---
+        $sql = "
+        SELECT
+            a.id,
+            a.user_id,
+            a.company_id,
+            a.job_post_id,
+            a.reviewer_user_id,
+            a.status,
+            a.cover_letter,
+            a.created_at,
+            a.updated_at,
+
+            CONCAT(u.name, ' ', u.surname) AS user_full_name,
+            u.user_image AS user_image_name,
+
+            jp.title AS job_title,
+            jp.status AS job_post_status,
+
+            CONCAT(ru.name, ' ', ru.surname) AS reviewer_full_name
+        FROM applications a
+        INNER JOIN users u ON u.id = a.user_id
+        LEFT JOIN job_posts jp ON jp.id = a.job_post_id
+        LEFT JOIN users ru ON ru.id = a.reviewer_user_id
+        WHERE {$whereSql}
+        ORDER BY a.id DESC
+        LIMIT {$perPage} OFFSET {$offset}
+    ";
+
+        $items = $crud->query($sql, $params);
         if ($items === false) {
             throw new \RuntimeException('Company applications could not be loaded');
         }
@@ -521,7 +618,6 @@ class RecruitmentDomainService
             'items' => $items,
         ];
     }
-
 
     public static function get_application_detail(
         int $applicationId,
@@ -535,24 +631,31 @@ class RecruitmentDomainService
             throw new RuntimeException('Application not found');
         }
 
-        $oldStatus = $app['status'];
+        $oldStatus = (string) ($app['status'] ?? '');
         if ($autoMarkUnderReview && $oldStatus === self::S_APP_SUBMITTED) {
-            $app = self::changeAppStatus(
+
+            $appAfter = self::changeAppStatus(
                 $crud,
                 $app,
                 self::S_APP_UNDER_REVIEW,
                 $actorUserId,
-                null
+                'AUTO: first company view'
             );
 
-            if (!empty($app['user_id'])) {
-                RecruitmentMessageService::notify_candidate(
-                    (int) $app['user_id'],
-                    'application_under_review',
-                    'Application under review',
-                    'Your application is under review',
-                    ['application_id' => $applicationId]
-                );
+            // Status gerçekten değiştiyse notification gönder (race-case'te ikinci kişi gereksiz bildirim atmasın)
+            $newStatus = (string) ($appAfter['status'] ?? '');
+            $app = $appAfter;
+
+            if ($newStatus === self::S_APP_UNDER_REVIEW && $oldStatus !== $newStatus) {
+                if (!empty($app['user_id'])) {
+                    RecruitmentMessageService::notify_candidate(
+                        (int) $app['user_id'],
+                        'application_under_review',
+                        'Application under review',
+                        'Your application is under review',
+                        ['application_id' => $applicationId]
+                    );
+                }
             }
         }
 
@@ -658,10 +761,19 @@ class RecruitmentDomainService
                 $title,
                 $body,
                 [
-                    'application_id' => $applicationId,
-                    'message_id' => $msgId,
+                    'target' => 'candidate_application_detail',
+                    'route_args' => [
+                        'application_id' => $applicationId,
+                    ],
+                    // opsiyonel ama faydalı:
+                    'extra' => [
+                        'message_id' => $msgId,
+                        'direction' => $direction,
+                        'message_type' => $messageType,
+                    ],
                 ]
             );
+
         }
 
         return [
@@ -840,7 +952,7 @@ class RecruitmentDomainService
     ): array {
         $crud = self::makeCrud($userId);
 
-        return self::paginate(
+        $res = self::paginate(
             $crud,
             self::T_JOB_POSTS,
             ['status' => self::S_JOB_PUBLISHED],
@@ -848,7 +960,66 @@ class RecruitmentDomainService
             $perPage,
             ['created_at' => 'DESC']
         );
+
+        $items = (isset($res['items']) && is_array($res['items'])) ? $res['items'] : [];
+        if (!$items) {
+            return $res;
+        }
+
+        // company_id batch
+        $companyIds = [];
+        foreach ($items as $it) {
+            $cid = (int) ($it['company_id'] ?? 0);
+            if ($cid > 0)
+                $companyIds[] = $cid;
+        }
+        $companyIds = array_values(array_unique($companyIds));
+
+        // companies map: id => [name, logo]
+        $companyMap = [];
+        if ($companyIds) {
+            // DİKKAT: logo alan adı sende "logo" değilse aşağıdaki columns'ı düzelt
+            $rows = $crud->read(self::T_COMPANIES, ['id' => ['IN', $companyIds]], ['id', 'name', 'logo'], true);
+            if ($rows === false)
+                $rows = [];
+            foreach ($rows as $r) {
+                $id = (int) ($r['id'] ?? 0);
+                if ($id <= 0)
+                    continue;
+                $companyMap[$id] = [
+                    'name' => (string) ($r['name'] ?? ''),
+                    'logo' => $r['logo'] ?? null,
+                ];
+            }
+        }
+
+        foreach ($items as &$it) {
+            $cid = (int) ($it['company_id'] ?? 0);
+
+            $it['company_name'] = $companyMap[$cid]['name'] ?? null;
+
+            // Logo alanını direkt verelim (Flutter URL builder yapabilir)
+            $logo = $companyMap[$cid]['logo'] ?? null;
+            $it['company_logo'] = $logo;
+
+            // İstersen hazır path de verelim (slash normalize)
+            if (is_string($logo) && $logo !== '') {
+                $p = ltrim($logo, '/'); // "/uploads/.." -> "uploads/.."
+                // Eğer sadece dosya adı ise logos klasörüne koy
+                if (strpos($p, 'uploads/') !== 0 && strpos($p, 'http') !== 0) {
+                    $p = 'uploads/logos/' . $p;
+                }
+                $it['company_logo_path'] = $p;
+            } else {
+                $it['company_logo_path'] = null;
+            }
+        }
+        unset($it);
+
+        $res['items'] = $items;
+        return $res;
     }
+
 
     public static function get_public_job_post(
         int $jobPostId,
@@ -1050,7 +1221,7 @@ class RecruitmentDomainService
     ): array {
         $crud = self::makeCrud($userId);
 
-        return self::paginate(
+        $res = self::paginate(
             $crud,
             self::T_APPS,
             ['user_id' => $userId],
@@ -1058,6 +1229,71 @@ class RecruitmentDomainService
             $perPage,
             ['created_at' => 'DESC']
         );
+
+        $items = (isset($res['items']) && is_array($res['items'])) ? $res['items'] : [];
+        if (!$items) {
+            return $res;
+        }
+
+        // job_post_id + company_id topluyoruz (N+1 yapmayacağız)
+        $jobIds = [];
+        $companyIds = [];
+        foreach ($items as $it) {
+            $jid = (int) ($it['job_post_id'] ?? 0);
+            if ($jid > 0)
+                $jobIds[] = $jid;
+
+            $cid = (int) ($it['company_id'] ?? 0);
+            if ($cid > 0)
+                $companyIds[] = $cid;
+        }
+        $jobIds = array_values(array_unique($jobIds));
+        $companyIds = array_values(array_unique($companyIds));
+
+        // job_posts map: id => [title, description]
+        $jobMap = [];
+        if ($jobIds) {
+            $rows = $crud->read(self::T_JOB_POSTS, ['id' => ['IN', $jobIds]], ['id', 'title', 'description'], true);
+            if ($rows === false)
+                $rows = [];
+            foreach ($rows as $r) {
+                $id = (int) ($r['id'] ?? 0);
+                if ($id <= 0)
+                    continue;
+                $jobMap[$id] = [
+                    'title' => (string) ($r['title'] ?? ''),
+                    'description' => (string) ($r['description'] ?? ''),
+                ];
+            }
+        }
+
+        // companies map: id => name
+        $companyMap = [];
+        if ($companyIds) {
+            $rows = $crud->read(self::T_COMPANIES, ['id' => ['IN', $companyIds]], ['id', 'name'], true);
+            if ($rows === false)
+                $rows = [];
+            foreach ($rows as $r) {
+                $id = (int) ($r['id'] ?? 0);
+                if ($id <= 0)
+                    continue;
+                $companyMap[$id] = (string) ($r['name'] ?? '');
+            }
+        }
+
+        // items içine ek alanlar
+        foreach ($items as &$it) {
+            $jid = (int) ($it['job_post_id'] ?? 0);
+            $cid = (int) ($it['company_id'] ?? 0);
+
+            $it['job_title'] = $jobMap[$jid]['title'] ?? null;
+            $it['job_description'] = $jobMap[$jid]['description'] ?? null; // search için faydalı
+            $it['company_name'] = $companyMap[$cid] ?? null;
+        }
+        unset($it);
+
+        $res['items'] = $items;
+        return $res;
     }
 
     public static function get_my_application_detail(
@@ -1072,6 +1308,29 @@ class RecruitmentDomainService
         ]);
         if (!$app) {
             throw new RuntimeException('Application not found');
+        }
+
+        // --- job + company bilgilerini ekle (list_my_applications ile uyumlu) ---
+        $job = null;
+        $company = null;
+
+        $jobPostId = (int) ($app['job_post_id'] ?? 0);
+        if ($jobPostId > 0) {
+            $job = self::getOne($crud, self::T_JOB_POSTS, ['id' => $jobPostId], ['id', 'title', 'description']);
+            if ($job) {
+                $app['job_title'] = (string) ($job['title'] ?? '');
+                $app['job_description'] = (string) ($job['description'] ?? '');
+            }
+        }
+
+        $companyId = (int) ($app['company_id'] ?? 0);
+        if ($companyId > 0) {
+            $company = self::getOne($crud, self::T_COMPANIES, ['id' => $companyId], ['id', 'name', 'logo']);
+            if ($company) {
+                $app['company_name'] = (string) ($company['name'] ?? '');
+                // UI gerekirse kullanır
+                $app['company_logo'] = $company['logo'] ?? null;
+            }
         }
 
         $messages = $crud->read(
@@ -1092,7 +1351,13 @@ class RecruitmentDomainService
 
         // internal_notes BİLEREK dahil değil
         return [
+            // Geriye uyumluluk: UI "application.job_title" ve "application.company_name" ile okuyabilsin
             'application' => $app,
+
+            // İleriye dönük: istersek UI burada nested da okuyabilir
+            'job' => $job,
+            'company' => $company,
+
             'messages' => $messages,
             'status_history' => $history,
         ];
@@ -1225,6 +1490,40 @@ class RecruitmentDomainService
         return [
             'application_id' => $applicationId,
             'status' => $app['status'],
+        ];
+    }
+    private static function buildTimelineEvent(array $row): array
+    {
+        $type = $row['type'] ?? 'status';
+        $actor = $row['actor_type'] ?? 'system';
+
+        switch ($type) {
+            case 'status':
+                $title = 'Application status updated';
+                $body = 'Status changed to ' . strtoupper($row['status']);
+                break;
+
+            case 'note':
+                $title = 'Note added';
+                $body = $row['content'] ?? '';
+                break;
+
+            case 'system':
+                $title = 'System update';
+                $body = $row['content'] ?? '';
+                break;
+
+            default:
+                $title = 'Activity';
+                $body = '';
+        }
+
+        return [
+            'type' => $type,
+            'title' => $title,
+            'body' => $body,
+            'actor' => ucfirst($actor),
+            'created_at' => $row['created_at'],
         ];
     }
 }

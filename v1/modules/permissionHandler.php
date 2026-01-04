@@ -144,7 +144,7 @@ class PermissionHandler
                 );
                 if (!$ok) return ['success'=>false, 'message'=>'role_update_failed'];
             } else {
-                $res = CompanyHandler::setMemberRole([
+                $res = CompanyHandler::set_member_role([
                     'company_id' => $companyId,
                     'user_id'    => $targetUserId,
                     'role_id'    => $roleId,

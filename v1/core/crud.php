@@ -526,7 +526,7 @@ class Crud
 
     public function update(string $table, array $data, array $conditions): bool
     {
-        if (!$this->isAllowedTable($table, 'update')) {
+        if (!$this->isAllowedTable($table, 'update') || !$this->hasPermission('update', $table)) {
             Logger::error("Update blocked by access control", ['table' => $table, 'user_id' => $this->userId]);
             return false;
         }
